@@ -32,6 +32,7 @@ func main() {
 	formatFlag := flag.String("format", envOr("LAZYFLAKES_FORMAT", "flake"), "preferred file to generate: flake or shell (env LAZYFLAKES_FORMAT)")
 	envrc := flag.Bool("envrc", os.Getenv("LAZYFLAKES_ENVRC") != "0", "also write a direnv .envrc (env LAZYFLAKES_ENVRC=0 to disable)")
 	allowFlag := flag.String("allow", os.Getenv("LAZYFLAKES_ALLOW"), "comma-separated nixpkgs options to enable: unfree,insecure,broken,unsupported (env LAZYFLAKES_ALLOW)")
+	configPath := flag.String("config", defaultConfigPath(), "config file with the system targets (see `lazyflakes setup`)")
 	dir := flag.String("dir", ".", "directory to write generated files into")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  lazyflakes [flags]   browse nixpkgs\n  lazyflakes setup     detect your system configuration and write the config\n\nFlags:\n")
@@ -56,7 +57,7 @@ func main() {
 		fail(err)
 	}
 
-	p := tea.NewProgram(ui.New(channels, channel, *refresh, absDir, format, *envrc, opts), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(ui.New(channels, channel, *refresh, absDir, format, *envrc, opts, *configPath), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fail(err)
 	}

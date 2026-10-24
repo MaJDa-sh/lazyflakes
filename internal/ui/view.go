@@ -68,6 +68,8 @@ func (m Model) View() string {
 		screen = overlayCenter(screen, m.generateView(), m.width, m.height)
 	case popupConfirm:
 		screen = overlayCenter(screen, m.confirmView(), m.width, m.height)
+	case popupSystem:
+		screen = overlayCenter(screen, m.systemView(), m.width, m.height)
 	case popupOptions:
 		if m.optReturn == popupGenerate {
 			screen = overlayCenter(screen, m.generateView(), m.width, m.height)
@@ -366,15 +368,17 @@ func (m Model) footerView() string {
 	case focusSearch:
 		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"o", "options"}, {"tab", "packages"}, {"q", "quit"}}
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"tab", "packages"}, {"q", "quit"}}
 	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"o", "options"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
 	}
 	switch m.popup {
 	case popupGenerate:
 		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"e", ".envrc"}, {"o", "options"}, {"esc", "cancel"}}
 	case popupConfirm:
 		keys = [][2]string{{"y", "overwrite"}, {"n", "back"}}
+	case popupSystem:
+		keys = [][2]string{{"enter", "apply"}, {"s", "save only"}, {"d", "remove"}, {"c", "channel"}, {"tab", "target"}, {"esc", "close"}}
 	case popupOptions:
 		keys = [][2]string{{"j/k", "move"}, {"space", "toggle"}, {"1-4", "toggle"}, {"esc", "done"}}
 	}

@@ -37,6 +37,7 @@ const (
 	popupGenerate
 	popupConfirm
 	popupOptions
+	popupSystem
 )
 
 type loadedMsg struct {
@@ -67,12 +68,13 @@ type Model struct {
 	refresh  bool   // ignore the cache on the first load
 	dir      string // where generated files are written
 
-	pkgs     []nix.Package // union of all channels, sorted by attr
-	versions [][]string    // versions[pkg][channel], "" when missing
-	index    *search.Index
-	filtered []int // indices into pkgs, ranked by the current query
-	cursor   int   // position in filtered
-	offset   int   // first visible row of filtered
+	pkgs      []nix.Package // union of all channels, sorted by attr
+	versions  [][]string    // versions[pkg][channel], "" when missing
+	attrIndex map[string]int
+	index     *search.Index
+	filtered  []int // indices into pkgs, ranked by the current query
+	cursor    int   // position in filtered
+	offset    int   // first visible row of filtered
 
 	selected  []selection // in the order they were marked
 	selCursor int
@@ -84,6 +86,9 @@ type Model struct {
 	opts      generate.Options // nixpkgs config for files and shells
 	optCursor int              // index into generate.AllOptions
 	optReturn popup            // popup to go back to when options close
+
+	configPath string   // config.toml with the system targets
+	sys        sysState // the system popup
 
 	input   textinput.Model
 	spinner spinner.Model
@@ -97,7 +102,7 @@ type Model struct {
 	width, height int
 }
 
-func New(channels []generate.Channel, channel int, refresh bool, dir string, format generate.Format, envrc bool, opts generate.Options) Model {
+func New(channels []generate.Channel, channel int, refresh bool, dir string, format generate.Format, envrc bool, opts generate.Options, configPath string) Model {
 	in := textinput.New()
 	in.Prompt = " "
 	in.Placeholder = "type / to search packages…"
@@ -107,7 +112,7 @@ func New(channels []generate.Channel, channel int, refresh bool, dir string, for
 
 	return Model{
 		channels: channels, channel: channel, refresh: refresh, dir: dir,
-		genCursor: int(format), envrc: envrc, opts: opts, input: in, spinner: sp,
+		genCursor: int(format), envrc: envrc, opts: opts, configPath: configPath, input: in, spinner: sp,
 	}.startLoading(refresh)
 }
 
@@ -180,6 +185,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case appliedMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("error: updating %s failed, nothing was changed (%v)", msg.target, msg.err)
+		} else if msg.rebuilt {
+			m.status = fmt.Sprintf("%s updated: %s packages", msg.target, msg.summary)
+		} else {
+			m.status = fmt.Sprintf("%s saved without rebuilding: %s packages", msg.target, msg.summary)
+		}
+		return m, nil
+
+	case setupDoneMsg:
+		m.openSystem()
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -218,6 +237,10 @@ func (m *Model) loadedChannel(msg loadedMsg) {
 		return
 	}
 	m.pkgs, m.versions = merge(lists)
+	m.attrIndex = make(map[string]int, len(m.pkgs))
+	for i, p := range m.pkgs {
+		m.attrIndex[p.Attr] = i
+	}
 	m.index = search.NewIndex(m.pkgs)
 	m.selected = nil
 	m.refilter()
@@ -299,6 +322,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openGenerate()
 		case "o":
 			m.openOptions()
+		case "a":
+			m.openSystem()
 		case "enter":
 			return m, m.enterShell()
 		}
@@ -342,6 +367,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openGenerate()
 	case "o":
 		m.openOptions()
+	case "a":
+		m.openSystem()
 	case "enter":
 		return m, m.enterShell()
 	}
@@ -349,6 +376,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
+	if m.popup == popupSystem {
+		return m.handleSystemKey(key)
+	}
 	if m.popup == popupOptions {
 		n := len(generate.AllOptions)
 		switch key {
