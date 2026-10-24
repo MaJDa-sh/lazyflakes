@@ -2,9 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/kacper/lazyflakes/internal/generate"
 )
 
 const searchHeight = 3
@@ -48,7 +53,83 @@ func (m Model) View() string {
 		m.detailsView(rightW, bodyH-selH),
 		m.selectedView(rightW, selH),
 	)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, right) + "\n" + m.footerView()
+	screen := lipgloss.JoinHorizontal(lipgloss.Top, left, right) + "\n" + m.footerView()
+
+	switch m.popup {
+	case popupGenerate:
+		screen = overlayCenter(screen, m.generateView(), m.width, m.height)
+	case popupConfirm:
+		screen = overlayCenter(screen, m.confirmView(), m.width, m.height)
+	}
+	return screen
+}
+
+// generateView is the format menu with a live preview of the file.
+func (m Model) generateView() string {
+	w := min(m.width-4, 80)
+	h := min(m.height-2, 30)
+	inner := w - 2
+
+	descs := map[generate.Format]string{
+		generate.ShellNix: "classic nix-shell, uses your nixpkgs channel",
+		generate.Flake:    "nix develop, pinned by flake.lock",
+	}
+	var lines []string
+	for i, f := range generate.Formats {
+		text := fmt.Sprintf(" %-10s %s", f.Filename(), dimStyle.Render(descs[f]))
+		if i == m.genCursor {
+			text = cursorStyle.Render(padTo(fmt.Sprintf(" %-10s %s", f.Filename(), descs[f]), inner))
+		}
+		lines = append(lines, text)
+	}
+
+	f := generate.Formats[m.genCursor]
+	lines = append(lines, "", labelStyle.Render(" preview"))
+	if _, err := os.Stat(filepath.Join(m.dir, f.Filename())); err == nil {
+		lines[len(lines)-1] += errStyle.Render(" (" + f.Filename() + " exists, will ask before overwriting)")
+	}
+	for _, l := range strings.Split(generate.Render(f, m.selectedAttrs(), m.flakeRef), "\n") {
+		lines = append(lines, " "+l)
+	}
+	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · esc cancel", lines, w, h, true)
+}
+
+func (m Model) confirmView() string {
+	f := generate.Formats[m.genCursor]
+	path := displayPath(filepath.Join(m.dir, f.Filename()))
+	msg := " " + path + " already exists. Overwrite it?"
+	w := min(m.width-4, ansi.StringWidth(msg)+4)
+	return panel("Overwrite?", "y yes · n no", []string{"", msg, ""}, w, 5, true)
+}
+
+// overlayCenter draws fg centered on top of bg, both being full screens of text.
+func overlayCenter(bg, fg string, w, h int) string {
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+	fgW := lipgloss.Width(fg)
+	x := max(0, (w-fgW)/2)
+	y := max(0, (h-len(fgLines))/2)
+	for i, l := range fgLines {
+		row := y + i
+		if row >= len(bgLines) {
+			break
+		}
+		b := bgLines[row]
+		left := ansi.Truncate(b, x, "")
+		left += strings.Repeat(" ", x-ansi.StringWidth(left))
+		bgLines[row] = left + l + ansi.TruncateLeft(b, x+fgW, "")
+	}
+	return strings.Join(bgLines, "\n")
+}
+
+// displayPath shortens the home directory to ~.
+func displayPath(path string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.Join("~", rel)
+		}
+	}
+	return path
 }
 
 func (m Model) listHeight() int {
@@ -159,9 +240,15 @@ func (m Model) footerView() string {
 	case focusSearch:
 		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"tab", "packages"}, {"q", "quit"}}
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"w", "write nix file"}, {"tab", "packages"}, {"q", "quit"}}
 	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"w", "write nix file"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+	}
+	switch m.popup {
+	case popupGenerate:
+		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"esc", "cancel"}}
+	case popupConfirm:
+		keys = [][2]string{{"y", "overwrite"}, {"n", "back"}}
 	}
 	parts := make([]string, len(keys))
 	for i, k := range keys {

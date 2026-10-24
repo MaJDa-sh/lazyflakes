@@ -3,6 +3,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kacper/lazyflakes/internal/generate"
 	"github.com/kacper/lazyflakes/internal/nix"
 	"github.com/kacper/lazyflakes/internal/search"
 )
@@ -24,6 +26,15 @@ const (
 	focusSelected
 )
 
+// popup is a modal drawn over the panels; while open it takes all keys.
+type popup int
+
+const (
+	popupNone popup = iota
+	popupGenerate
+	popupConfirm
+)
+
 type loadedMsg struct {
 	pkgs   []nix.Package
 	cached bool
@@ -33,7 +44,8 @@ type loadedMsg struct {
 
 type Model struct {
 	flakeRef string
-	refresh  bool // ignore the cache on the first load
+	refresh  bool   // ignore the cache on the first load
+	dir      string // where generated files are written
 
 	pkgs     []nix.Package
 	index    *search.Index
@@ -43,6 +55,9 @@ type Model struct {
 
 	selected  []int // indices into pkgs, in the order they were marked
 	selCursor int
+
+	popup     popup
+	genCursor int // index into generate.Formats
 
 	input   textinput.Model
 	spinner spinner.Model
@@ -55,7 +70,7 @@ type Model struct {
 	width, height int
 }
 
-func New(flakeRef string, refresh bool) Model {
+func New(flakeRef string, refresh bool, dir string, format generate.Format) Model {
 	in := textinput.New()
 	in.Prompt = " "
 	in.Placeholder = "type / to search packages…"
@@ -63,7 +78,7 @@ func New(flakeRef string, refresh bool) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	m := Model{flakeRef: flakeRef, refresh: refresh, input: in, spinner: sp, loading: true}
+	m := Model{flakeRef: flakeRef, refresh: refresh, dir: dir, genCursor: int(format), input: in, spinner: sp, loading: true}
 	m.status = "loading " + flakeRef
 	if refresh {
 		m.status = "refreshing " + flakeRef
@@ -144,6 +159,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.popup != popupNone {
+		return m.handlePopupKey(key)
+	}
 
 	switch m.focus {
 	case focusSearch:
@@ -186,6 +204,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "/":
 			return m.focusSearch()
+		case "w":
+			m.openGenerate()
 		}
 		return m, nil
 	}
@@ -220,12 +240,76 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggle(p)
 			m.move(1)
 		}
+	case "w":
+		m.openGenerate()
 	case "ctrl+r":
 		m.loading = true
 		m.status = "refreshing " + m.flakeRef
 		return m, tea.Batch(m.spinner.Tick, load(m.flakeRef, true))
 	}
 	return m, nil
+}
+
+func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
+	if m.popup == popupConfirm {
+		switch key {
+		case "y", "Y", "enter":
+			m.write(true)
+		case "n", "N", "esc", "q":
+			m.popup = popupGenerate
+		}
+		return m, nil
+	}
+
+	switch key {
+	case "esc", "q":
+		m.popup = popupNone
+	case "j", "down", "tab":
+		m.genCursor = (m.genCursor + 1) % len(generate.Formats)
+	case "k", "up", "shift+tab":
+		m.genCursor = (m.genCursor + len(generate.Formats) - 1) % len(generate.Formats)
+	case "s":
+		m.genCursor = int(generate.ShellNix)
+		m.write(false)
+	case "f":
+		m.genCursor = int(generate.Flake)
+		m.write(false)
+	case "enter":
+		m.write(false)
+	}
+	return m, nil
+}
+
+func (m *Model) openGenerate() {
+	if len(m.selected) == 0 {
+		m.status = "select packages with space first"
+		return
+	}
+	m.popup = popupGenerate
+}
+
+// write generates the chosen file in m.dir, asking before replacing one.
+func (m *Model) write(overwrite bool) {
+	f := generate.Formats[m.genCursor]
+	path, err := generate.Write(m.dir, f, m.selectedAttrs(), m.flakeRef, overwrite)
+	switch {
+	case errors.Is(err, generate.ErrExists):
+		m.popup = popupConfirm
+	case err != nil:
+		m.popup = popupNone
+		m.status = "error: " + err.Error()
+	default:
+		m.popup = popupNone
+		m.status = fmt.Sprintf("wrote %s · %s", displayPath(path), f.Hint())
+	}
+}
+
+func (m Model) selectedAttrs() []string {
+	attrs := make([]string, len(m.selected))
+	for i, p := range m.selected {
+		attrs[i] = m.pkgs[p].Attr
+	}
+	return attrs
 }
 
 func (m Model) focusSearch() (tea.Model, tea.Cmd) {
@@ -292,13 +376,4 @@ func (m *Model) toggle(p int) {
 		}
 	}
 	m.selected = append(m.selected, p)
-}
-
-// Selected returns the packages the user marked, for later flake generation.
-func (m Model) Selected() []nix.Package {
-	out := make([]nix.Package, len(m.selected))
-	for i, p := range m.selected {
-		out[i] = m.pkgs[p]
-	}
-	return out
 }
