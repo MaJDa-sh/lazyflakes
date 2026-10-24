@@ -169,3 +169,60 @@ func tarballURL(ref string) (string, bool) {
 	}
 	return fmt.Sprintf("https://github.com/%s/%s/archive/%s.tar.gz", m[1], m[2], rev), true
 }
+
+// EnvrcLine is the direnv directive that loads the format's shell.
+func (f Format) EnvrcLine() string {
+	if f == Flake {
+		return "use flake"
+	}
+	return "use nix"
+}
+
+var useLine = regexp.MustCompile(`^\s*use\s+(nix|flake)\b`)
+
+// WriteEnvrc makes dir/.envrc load the format's shell. Existing content is
+// kept: a `use nix`/`use flake` line for the other format is swapped, one for
+// the same format is left alone, and otherwise the directive is appended.
+// changed reports whether the file was modified.
+func WriteEnvrc(dir string, f Format) (path string, changed bool, err error) {
+	path = filepath.Join(dir, ".envrc")
+	want := f.EnvrcLine()
+
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path, true, os.WriteFile(path, []byte(want+"\n"), 0o644)
+	}
+	if err != nil {
+		return path, false, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	out := make([]string, 0, len(lines)+1)
+	found := false
+	for _, l := range lines {
+		m := useLine.FindStringSubmatch(l)
+		switch {
+		case m == nil:
+			out = append(out, l)
+		case found:
+			changed = true // drop duplicate directives
+		case "use "+m[1] == want:
+			found = true
+			out = append(out, l)
+		default:
+			found, changed = true, true
+			out = append(out, want)
+		}
+	}
+	if !found {
+		if n := len(out); n > 0 && out[n-1] == "" {
+			out = out[:n-1]
+		}
+		out = append(out, want, "")
+		changed = true
+	}
+	if !changed {
+		return path, false, nil
+	}
+	return path, true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
+}

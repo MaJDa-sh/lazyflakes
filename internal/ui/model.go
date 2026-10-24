@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -58,7 +59,8 @@ type Model struct {
 	selCursor int
 
 	popup     popup
-	genCursor int // index into generate.Formats
+	genCursor int  // index into generate.Formats
+	envrc     bool // also write .envrc for direnv
 
 	input   textinput.Model
 	spinner spinner.Model
@@ -71,7 +73,7 @@ type Model struct {
 	width, height int
 }
 
-func New(flakeRef string, refresh bool, dir string, format generate.Format) Model {
+func New(flakeRef string, refresh bool, dir string, format generate.Format, envrc bool) Model {
 	in := textinput.New()
 	in.Prompt = " "
 	in.Placeholder = "type / to search packages…"
@@ -79,7 +81,7 @@ func New(flakeRef string, refresh bool, dir string, format generate.Format) Mode
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	m := Model{flakeRef: flakeRef, refresh: refresh, dir: dir, genCursor: int(format), input: in, spinner: sp, loading: true}
+	m := Model{flakeRef: flakeRef, refresh: refresh, dir: dir, genCursor: int(format), envrc: envrc, input: in, spinner: sp, loading: true}
 	m.status = "loading " + flakeRef
 	if refresh {
 		m.status = "refreshing " + flakeRef
@@ -269,6 +271,8 @@ func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
 		m.genCursor = (m.genCursor + 1) % len(generate.Formats)
 	case "k", "up", "shift+tab":
 		m.genCursor = (m.genCursor + len(generate.Formats) - 1) % len(generate.Formats)
+	case "e":
+		m.envrc = !m.envrc
 	case "s":
 		m.genCursor = int(generate.ShellNix)
 		m.write(false)
@@ -302,7 +306,30 @@ func (m *Model) write(overwrite bool) {
 	default:
 		m.popup = popupNone
 		m.status = fmt.Sprintf("wrote ./%s · %s", filepath.Base(path), f.Hint())
+		if m.envrc {
+			m.writeEnvrc(f)
+		}
 	}
+}
+
+func (m *Model) writeEnvrc(f generate.Format) {
+	_, changed, err := generate.WriteEnvrc(m.dir, f)
+	if err != nil {
+		m.status = fmt.Sprintf("wrote ./%s, but .envrc failed: %v", f.Filename(), err)
+		return
+	}
+	envrc := "+ .envrc"
+	if !changed {
+		envrc = "(.envrc already set)"
+	}
+	next := "run `direnv allow`"
+	if _, err := exec.LookPath("direnv"); err != nil {
+		next = "install direnv, then run `direnv allow`"
+	}
+	if f == generate.Flake {
+		next += " (git add flake.nix first inside a git repo)"
+	}
+	m.status = fmt.Sprintf("wrote ./%s %s · %s", f.Filename(), envrc, next)
 }
 
 func (m Model) selectedAttrs() []string {

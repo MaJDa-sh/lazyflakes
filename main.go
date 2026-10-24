@@ -18,6 +18,7 @@ func main() {
 	flakeRef := flag.String("flake", "nixpkgs", "flake reference to browse (e.g. nixpkgs, github:NixOS/nixpkgs/nixos-25.11)")
 	refresh := flag.Bool("refresh", false, "ignore the package cache and re-evaluate")
 	formatFlag := flag.String("format", envOr("LAZYFLAKES_FORMAT", "flake"), "preferred file to generate: flake or shell (env LAZYFLAKES_FORMAT)")
+	envrc := flag.Bool("envrc", os.Getenv("LAZYFLAKES_ENVRC") != "0", "also write a direnv .envrc (env LAZYFLAKES_ENVRC=0 to disable)")
 	dir := flag.String("dir", ".", "directory to write generated files into")
 	flag.Parse()
 
@@ -30,7 +31,7 @@ func main() {
 		fail(err)
 	}
 
-	p := tea.NewProgram(ui.New(*flakeRef, *refresh, absDir, format), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(ui.New(*flakeRef, *refresh, absDir, format, *envrc), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fail(err)
 	}

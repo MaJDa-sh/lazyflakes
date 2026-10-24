@@ -55,3 +55,29 @@ func TestWriteRefusesOverwrite(t *testing.T) {
 		t.Errorf("overwrite did not replace contents:\n%s", data)
 	}
 }
+
+func TestWriteEnvrc(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".envrc")
+	read := func() string { b, _ := os.ReadFile(path); return string(b) }
+
+	if _, changed, err := WriteEnvrc(dir, Flake); err != nil || !changed || read() != "use flake\n" {
+		t.Fatalf("create: changed=%v err=%v content=%q", changed, err, read())
+	}
+	if _, changed, _ := WriteEnvrc(dir, Flake); changed {
+		t.Fatal("same format should leave .envrc alone")
+	}
+	if _, changed, _ := WriteEnvrc(dir, ShellNix); !changed || read() != "use nix\n" {
+		t.Fatalf("switch format: changed=%v content=%q", changed, read())
+	}
+
+	os.WriteFile(path, []byte("export FOO=1\nuse flake .#dev\nuse nix\n"), 0o644)
+	if _, changed, _ := WriteEnvrc(dir, Flake); !changed || read() != "export FOO=1\nuse flake .#dev\n" {
+		t.Fatalf("custom directive kept, duplicate dropped: content=%q", read())
+	}
+
+	os.WriteFile(path, []byte("export FOO=1"), 0o644)
+	if _, _, _ = WriteEnvrc(dir, ShellNix); read() != "export FOO=1\nuse nix\n" {
+		t.Fatalf("append: content=%q", read())
+	}
+}

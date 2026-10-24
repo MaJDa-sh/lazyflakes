@@ -84,6 +84,13 @@ func (m Model) generateView() string {
 	}
 
 	f := generate.Formats[m.genCursor]
+	box := "[ ]"
+	if m.envrc {
+		box = markStyle.Render("[x]")
+	}
+	lines = append(lines, "", fmt.Sprintf(" %s also write .envrc %s", box,
+		dimStyle.Render("("+f.EnvrcLine()+", for direnv) · e toggle")))
+
 	lines = append(lines, "", labelStyle.Render(" preview"))
 	if _, err := os.Stat(filepath.Join(m.dir, f.Filename())); err == nil {
 		lines[len(lines)-1] += errStyle.Render(" (" + f.Filename() + " exists, will ask before overwriting)")
@@ -91,7 +98,7 @@ func (m Model) generateView() string {
 	for _, l := range strings.Split(generate.Render(f, m.selectedAttrs(), m.flakeRef), "\n") {
 		lines = append(lines, " "+l)
 	}
-	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · esc cancel", lines, w, h, true)
+	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · e .envrc · esc cancel", lines, w, h, true)
 }
 
 func (m Model) confirmView() string {
@@ -245,7 +252,7 @@ func (m Model) footerView() string {
 	}
 	switch m.popup {
 	case popupGenerate:
-		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"esc", "cancel"}}
+		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"e", ".envrc"}, {"esc", "cancel"}}
 	case popupConfirm:
 		keys = [][2]string{{"y", "overwrite"}, {"n", "back"}}
 	}
