@@ -29,12 +29,28 @@ type Target struct {
 	Attribute string            `toml:"attribute"` // defaults to the kind's package list
 	Rebuild   string            `toml:"rebuild"`   // shell command run after writing; empty to only write
 	Sets      map[string]string `toml:"sets"`      // channel name -> Nix expression for its package set
+	// NixpkgsConfig controls whether options such as allow unfree are
+	// written as nixpkgs.config.*; turn it off when the configuration gets
+	// its pkgs from elsewhere (nixpkgs.pkgs, readOnlyPkgs, useGlobalPkgs).
+	NixpkgsConfig *bool `toml:"nixpkgs_config"`
+
+	Sudo string `toml:"-"` // copied from Config.Sudo
 }
 
 // Config is the parsed config.toml.
 type Config struct {
-	Default string             `toml:"default"`
+	Default string `toml:"default"`
+	// Sudo is the command that writes files the user cannot, e.g. "doas".
+	Sudo    string             `toml:"sudo"`
 	Targets map[string]*Target `toml:"targets"`
+}
+
+// DefaultSudo is used when the config does not name a command.
+const DefaultSudo = "sudo"
+
+// WritesNixpkgsConfig reports whether options go into nixpkgs.config.
+func (t *Target) WritesNixpkgsConfig() bool {
+	return t.NixpkgsConfig == nil || *t.NixpkgsConfig
 }
 
 // ErrNoConfig is returned by Load when the config file does not exist.
@@ -58,8 +74,12 @@ func Load(path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if c.Sudo == "" {
+		c.Sudo = DefaultSudo
+	}
 	for name, t := range c.Targets {
 		t.Name = name
+		t.Sudo = c.Sudo
 		if err := t.normalize(); err != nil {
 			return nil, fmt.Errorf("%s: target %q: %w", path, name, err)
 		}

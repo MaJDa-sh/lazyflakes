@@ -105,6 +105,9 @@ func Render(t *config.Target, m Module) (string, error) {
 		fmt.Fprintf(&b, "\nlet\n%s\nin\n", strings.Join(lets, "\n"))
 	}
 	b.WriteString("{\n")
+	if !t.WritesNixpkgsConfig() {
+		m.Options = 0
+	}
 	for _, o := range m.Options.Enabled() {
 		attr, value := o.Setting()
 		fmt.Fprintf(&b, "  nixpkgs.config.%s = lib.mkDefault (%s); %s%s\n", attr, value, optionMarker, o.Key())

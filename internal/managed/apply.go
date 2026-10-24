@@ -22,6 +22,9 @@ type Plan struct {
 
 // NewPlan writes content to a temporary file and works out how to install it.
 func NewPlan(t *config.Target, content string, rebuild bool) (Plan, error) {
+	if t.Sudo == "" {
+		t.Sudo = config.DefaultSudo
+	}
 	f, err := os.CreateTemp("", "lazyflakes-*.nix")
 	if err != nil {
 		return Plan{}, err
@@ -75,7 +78,7 @@ func git(dir string, args ...string) *exec.Cmd {
 func (p Plan) Script() string {
 	sudo := ""
 	if p.Sudo {
-		sudo = "sudo "
+		sudo = p.Target.Sudo + " "
 	}
 	dir, name := filepath.Dir(p.Target.File), filepath.Base(p.Target.File)
 

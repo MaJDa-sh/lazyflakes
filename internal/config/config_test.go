@@ -46,6 +46,26 @@ file = "~/.config/home-manager/lazyflakes.nix"
 	if home.Attribute != "home.packages" || !filepath.IsAbs(home.File) || strings.Contains(home.File, "~") {
 		t.Errorf("home target = %+v", home)
 	}
+	if sys.Sudo != "sudo" || !sys.WritesNixpkgsConfig() {
+		t.Errorf("defaults: sudo=%q nixpkgs_config=%v", sys.Sudo, sys.WritesNixpkgsConfig())
+	}
+}
+
+func TestLoadSudoAndNixpkgsConfig(t *testing.T) {
+	c, err := Load(writeConfig(t, `
+sudo = "doas"
+[targets.laptop]
+kind = "nixos"
+file = "/etc/nixos/lazyflakes.nix"
+nixpkgs_config = false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Targets["laptop"]
+	if l.Sudo != "doas" || l.WritesNixpkgsConfig() {
+		t.Errorf("laptop = %+v", l)
+	}
 }
 
 func TestLoadErrors(t *testing.T) {

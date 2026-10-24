@@ -172,6 +172,42 @@ func TestApplyScriptGit(t *testing.T) {
 	}
 }
 
+func TestRenderWithoutNixpkgsConfig(t *testing.T) {
+	off := false
+	tgt := target("/x/lazyflakes.nix")
+	tgt.NixpkgsConfig = &off
+	src, err := Render(tgt, Module{Packages: []Entry{{"stable", "unrar"}}, Options: generate.Options(0).With(generate.Unfree)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(src, "nixpkgs.config") || !strings.Contains(src, "pkgs.unrar") {
+		t.Errorf("nixpkgs_config = false must not write nixpkgs.config:\n%s", src)
+	}
+}
+
+func TestApplyScriptUsesConfiguredSudo(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "sudo.log")
+	fake := filepath.Join(dir, "doas")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\nexec \"$@\"\n"), 0o755)
+
+	tgt := target(filepath.Join(dir, "lazyflakes.nix"))
+	tgt.Sudo = fake
+	tgt.Rebuild = "exit 1"
+	p, _ := NewPlan(tgt, "new\n", true)
+	defer p.Cleanup()
+	p.Sudo = true // pretend the file is root-owned
+	runPlan(t, p)
+
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "install -m 0644") || !strings.Contains(string(calls), "rm -f") {
+		t.Errorf("writing and restoring should go through the configured command, calls:\n%s", calls)
+	}
+	if strings.Contains(p.Script(), "sudo ") {
+		t.Errorf("script still uses sudo:\n%s", p.Script())
+	}
+}
+
 func TestScriptMarksRepoSafe(t *testing.T) {
 	dir := t.TempDir()
 	p := Plan{Target: target(filepath.Join(dir, "lazyflakes.nix")), NewFile: "/tmp/x", GitAdd: true, Rebuild: true}
