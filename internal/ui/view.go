@@ -68,6 +68,11 @@ func (m Model) View() string {
 		screen = overlayCenter(screen, m.generateView(), m.width, m.height)
 	case popupConfirm:
 		screen = overlayCenter(screen, m.confirmView(), m.width, m.height)
+	case popupOptions:
+		if m.optReturn == popupGenerate {
+			screen = overlayCenter(screen, m.generateView(), m.width, m.height)
+		}
+		screen = overlayCenter(screen, m.optionsView(), m.width, m.height)
 	}
 	return screen
 }
@@ -116,15 +121,47 @@ func (m Model) generateView() string {
 	}
 	lines = append(lines, "", fmt.Sprintf(" %s also write .envrc %s", box,
 		dimStyle.Render("("+f.EnvrcLine()+", for direnv) · e toggle")))
+	lines = append(lines, " "+labelStyle.Render("options")+" "+m.optionsSummary()+dimStyle.Render(" · o edit"))
 
 	lines = append(lines, "", labelStyle.Render(" preview"))
 	if _, err := os.Stat(filepath.Join(m.dir, f.Filename())); err == nil {
 		lines[len(lines)-1] += errStyle.Render(" (" + f.Filename() + " exists, will ask before overwriting)")
 	}
-	for _, l := range strings.Split(generate.Render(f, m.channels, m.selectedPackages(), 0), "\n") {
+	for _, l := range strings.Split(generate.Render(f, m.channels, m.selectedPackages(), m.opts), "\n") {
 		lines = append(lines, " "+l)
 	}
-	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · e .envrc · esc cancel", lines, w, h, true)
+	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · e .envrc · o options · esc cancel", lines, w, h, true)
+}
+
+func (m Model) optionsView() string {
+	w := min(m.width-4, 72)
+	inner := w - 2
+	var lines []string
+	for i, o := range generate.AllOptions {
+		box := "[ ]"
+		if m.opts.Has(o) {
+			box = "[x]"
+		}
+		text := fmt.Sprintf(" %d %s %-18s ", i+1, box, o.Name())
+		if i == m.optCursor {
+			lines = append(lines, cursorStyle.Render(padTo(text+o.Description(), inner)))
+			continue
+		}
+		if m.opts.Has(o) {
+			text = fmt.Sprintf(" %d %s %-18s ", i+1, markStyle.Render(box), o.Name())
+		}
+		lines = append(lines, text+dimStyle.Render(o.Description()))
+	}
+	lines = append(lines, "", dimStyle.Render(" applies to written files (w) and the shell (enter)"))
+	return panel("Shell options", "space toggle · 1-4 · esc done", lines, w, len(lines)+2, true)
+}
+
+// optionsSummary lists the enabled options, e.g. "unfree, insecure".
+func (m Model) optionsSummary() string {
+	if keys := m.opts.Keys(); len(keys) > 0 {
+		return markStyle.Render(strings.Join(keys, ", "))
+	}
+	return dimStyle.Render("none")
 }
 
 func (m Model) confirmView() string {
@@ -278,12 +315,22 @@ func (m Model) detailsView(w, h int) string {
 	lines = append(lines, wrap(desc, inner)...)
 	lines = append(lines, "",
 		labelStyle.Render("try it"),
-		dimStyle.Render("$ ")+fmt.Sprintf("nix shell %s#%s", m.channels[m.channelFor(p)].Ref, pkg.Attr),
+		dimStyle.Render("$ ")+m.tryCommand(p),
 	)
 	for i := range lines {
 		lines[i] = " " + lines[i]
 	}
 	return panel("Details", "", lines, w, h, false)
+}
+
+// tryCommand is a one-off `nix shell` for package p, with the options
+// passed as environment variables (which require --impure).
+func (m Model) tryCommand(p int) string {
+	ref := m.channels[m.channelFor(p)].Ref + "#" + m.pkgs[p].Attr
+	if env := m.opts.Env(); len(env) > 0 {
+		return strings.Join(env, " ") + " nix shell --impure " + ref
+	}
+	return "nix shell " + ref
 }
 
 func (m Model) selectedView(w, h int) string {
@@ -306,7 +353,11 @@ func (m Model) selectedView(w, h int) string {
 	if len(lines) == 0 {
 		lines = append(lines, dimStyle.Render(" press space on a package to add it"))
 	}
-	return panel(fmt.Sprintf("Selected %d", len(m.selected)), "", lines, w, h, m.focus == focusSelected)
+	footer := ""
+	if keys := m.opts.Keys(); len(keys) > 0 {
+		footer = "allow " + strings.Join(keys, ", ")
+	}
+	return panel(fmt.Sprintf("Selected %d", len(m.selected)), footer, lines, w, h, m.focus == focusSelected)
 }
 
 func (m Model) footerView() string {
@@ -315,15 +366,17 @@ func (m Model) footerView() string {
 	case focusSearch:
 		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "packages"}, {"q", "quit"}}
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"o", "options"}, {"tab", "packages"}, {"q", "quit"}}
 	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"o", "options"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
 	}
 	switch m.popup {
 	case popupGenerate:
-		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"e", ".envrc"}, {"esc", "cancel"}}
+		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"e", ".envrc"}, {"o", "options"}, {"esc", "cancel"}}
 	case popupConfirm:
 		keys = [][2]string{{"y", "overwrite"}, {"n", "back"}}
+	case popupOptions:
+		keys = [][2]string{{"j/k", "move"}, {"space", "toggle"}, {"1-4", "toggle"}, {"esc", "done"}}
 	}
 	parts := make([]string, len(keys))
 	for i, k := range keys {

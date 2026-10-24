@@ -36,6 +36,7 @@ const (
 	popupNone popup = iota
 	popupGenerate
 	popupConfirm
+	popupOptions
 )
 
 type loadedMsg struct {
@@ -80,6 +81,10 @@ type Model struct {
 	genCursor int  // index into generate.Formats
 	envrc     bool // also write .envrc for direnv
 
+	opts      generate.Options // nixpkgs config for files and shells
+	optCursor int              // index into generate.AllOptions
+	optReturn popup            // popup to go back to when options close
+
 	input   textinput.Model
 	spinner spinner.Model
 	focus   focus
@@ -92,7 +97,7 @@ type Model struct {
 	width, height int
 }
 
-func New(channels []generate.Channel, channel int, refresh bool, dir string, format generate.Format, envrc bool) Model {
+func New(channels []generate.Channel, channel int, refresh bool, dir string, format generate.Format, envrc bool, opts generate.Options) Model {
 	in := textinput.New()
 	in.Prompt = " "
 	in.Placeholder = "type / to search packages…"
@@ -102,7 +107,7 @@ func New(channels []generate.Channel, channel int, refresh bool, dir string, for
 
 	return Model{
 		channels: channels, channel: channel, refresh: refresh, dir: dir,
-		genCursor: int(format), envrc: envrc, input: in, spinner: sp,
+		genCursor: int(format), envrc: envrc, opts: opts, input: in, spinner: sp,
 	}.startLoading(refresh)
 }
 
@@ -292,6 +297,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.focusSearch()
 		case "w":
 			m.openGenerate()
+		case "o":
+			m.openOptions()
 		case "enter":
 			return m, m.enterShell()
 		}
@@ -333,6 +340,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "new selections come from " + m.channels[m.channel].Name
 	case "w":
 		m.openGenerate()
+	case "o":
+		m.openOptions()
 	case "enter":
 		return m, m.enterShell()
 	}
@@ -340,6 +349,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
+	if m.popup == popupOptions {
+		n := len(generate.AllOptions)
+		switch key {
+		case "esc", "q", "o", "enter":
+			m.popup = m.optReturn
+		case "j", "down", "tab":
+			m.optCursor = (m.optCursor + 1) % n
+		case "k", "up", "shift+tab":
+			m.optCursor = (m.optCursor + n - 1) % n
+		case " ", "x":
+			m.opts = m.opts.Toggle(generate.AllOptions[m.optCursor])
+		case "1", "2", "3", "4":
+			if i := int(key[0] - '1'); i < n {
+				m.optCursor = i
+				m.opts = m.opts.Toggle(generate.AllOptions[i])
+			}
+		}
+		return m, nil
+	}
 	if m.popup == popupConfirm {
 		switch key {
 		case "y", "Y", "enter":
@@ -359,6 +387,8 @@ func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
 		m.genCursor = (m.genCursor + len(generate.Formats) - 1) % len(generate.Formats)
 	case "e":
 		m.envrc = !m.envrc
+	case "o":
+		m.openOptions()
 	case "s":
 		m.genCursor = int(generate.ShellNix)
 		m.write(false)
@@ -369,6 +399,12 @@ func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
 		m.write(false)
 	}
 	return m, nil
+}
+
+// openOptions shows the options popup on top of the current one.
+func (m *Model) openOptions() {
+	m.optReturn = m.popup
+	m.popup = popupOptions
 }
 
 func (m *Model) openGenerate() {
@@ -382,7 +418,7 @@ func (m *Model) openGenerate() {
 // write generates the chosen file in m.dir, asking before replacing one.
 func (m *Model) write(overwrite bool) {
 	f := generate.Formats[m.genCursor]
-	path, err := generate.Write(m.dir, f, m.channels, m.selectedPackages(), 0, overwrite)
+	path, err := generate.Write(m.dir, f, m.channels, m.selectedPackages(), m.opts, overwrite)
 	switch {
 	case errors.Is(err, generate.ErrExists):
 		m.popup = popupConfirm

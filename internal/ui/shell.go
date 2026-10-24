@@ -52,7 +52,9 @@ func (s *shellCmd) Run() error {
 	if err != nil {
 		// Keep nix's error on screen until the user has read it; the alt screen
 		// would otherwise hide it immediately.
-		fmt.Fprintf(s.stdout, "\nlazyflakes: %v\npress enter to return to lazyflakes", err)
+		fmt.Fprintf(s.stdout, "\nlazyflakes: %v\n"+
+			"(refused an unfree, insecure or broken package? allow it with `o`)\n"+
+			"press enter to return to lazyflakes", err)
 		bufio.NewReader(s.stdin).ReadString('\n')
 	}
 	return err
@@ -75,7 +77,7 @@ func (m *Model) enterShell() tea.Cmd {
 		labels[i] = m.label(s)
 		pkgs[i] = generate.Package{Attr: m.pkgs[s.pkg].Attr, Channel: s.channel}
 	}
-	expr := generate.ShellExpr(m.channels, pkgs, 0)
+	expr := generate.ShellExpr(m.channels, pkgs, m.opts)
 	return tea.Exec(newShellCmd(labels, expr), func(err error) tea.Msg {
 		return shellExitedMsg{labels: labels, err: err}
 	})

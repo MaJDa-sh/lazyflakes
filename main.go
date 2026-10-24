@@ -24,10 +24,15 @@ func main() {
 	refresh := flag.Bool("refresh", false, "ignore the package cache and re-evaluate")
 	formatFlag := flag.String("format", envOr("LAZYFLAKES_FORMAT", "flake"), "preferred file to generate: flake or shell (env LAZYFLAKES_FORMAT)")
 	envrc := flag.Bool("envrc", os.Getenv("LAZYFLAKES_ENVRC") != "0", "also write a direnv .envrc (env LAZYFLAKES_ENVRC=0 to disable)")
+	allowFlag := flag.String("allow", os.Getenv("LAZYFLAKES_ALLOW"), "comma-separated nixpkgs options to enable: unfree,insecure,broken,unsupported (env LAZYFLAKES_ALLOW)")
 	dir := flag.String("dir", ".", "directory to write generated files into")
 	flag.Parse()
 
 	format, err := generate.ParseFormat(*formatFlag)
+	if err != nil {
+		fail(err)
+	}
+	opts, err := generate.ParseOptions(*allowFlag)
 	if err != nil {
 		fail(err)
 	}
@@ -40,7 +45,7 @@ func main() {
 		fail(err)
 	}
 
-	p := tea.NewProgram(ui.New(channels, channel, *refresh, absDir, format, *envrc), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(ui.New(channels, channel, *refresh, absDir, format, *envrc, opts), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fail(err)
 	}
