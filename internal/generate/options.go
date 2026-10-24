@@ -19,18 +19,24 @@ const (
 var AllOptions = []Option{Unfree, Insecure, Broken, Unsupported}
 
 var optionInfo = [...]struct {
-	key, name, desc, config, env string
+	key, name, desc, attr, value, env string
 }{
-	Unfree:      {"unfree", "allow unfree", "proprietary licenses, e.g. vscode, steam, cuda", "allowUnfree = true;", "NIXPKGS_ALLOW_UNFREE=1"},
-	Insecure:    {"insecure", "allow insecure", "packages with known vulnerabilities", "allowInsecurePredicate = _: true;", "NIXPKGS_ALLOW_INSECURE=1"},
-	Broken:      {"broken", "allow broken", "packages marked as broken", "allowBroken = true;", "NIXPKGS_ALLOW_BROKEN=1"},
-	Unsupported: {"unsupported", "allow unsupported", "packages not marked for this system", "allowUnsupportedSystem = true;", "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1"},
+	Unfree:      {"unfree", "allow unfree", "proprietary licenses, e.g. vscode, steam, cuda", "allowUnfree", "true", "NIXPKGS_ALLOW_UNFREE=1"},
+	Insecure:    {"insecure", "allow insecure", "packages with known vulnerabilities", "allowInsecurePredicate", "_: true", "NIXPKGS_ALLOW_INSECURE=1"},
+	Broken:      {"broken", "allow broken", "packages marked as broken", "allowBroken", "true", "NIXPKGS_ALLOW_BROKEN=1"},
+	Unsupported: {"unsupported", "allow unsupported", "packages not marked for this system", "allowUnsupportedSystem", "true", "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1"},
 }
 
 // Key is the short name used by -allow, e.g. "unfree".
 func (o Option) Key() string         { return optionInfo[o].key }
 func (o Option) Name() string        { return optionInfo[o].name }
 func (o Option) Description() string { return optionInfo[o].desc }
+
+// Setting is the nixpkgs config attribute and the Nix value that enable it.
+func (o Option) Setting() (attr, value string) { return optionInfo[o].attr, optionInfo[o].value }
+
+// Enabled returns the enabled options in menu order.
+func (s Options) Enabled() []Option { return s.enabled() }
 
 // Options is the set of enabled options.
 type Options uint
@@ -72,7 +78,8 @@ func (s Options) Env() []string {
 func (s Options) configExpr() string {
 	var attrs []string
 	for _, o := range s.enabled() {
-		attrs = append(attrs, optionInfo[o].config)
+		attr, value := o.Setting()
+		attrs = append(attrs, attr+" = "+value+";")
 	}
 	if len(attrs) == 0 {
 		return ""

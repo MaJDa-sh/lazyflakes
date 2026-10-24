@@ -188,6 +188,11 @@ func packagesExpr(channels []Channel, pkgs []Package, indent string) string {
 	return b.String()
 }
 
+// AttrPath renders attr taken from the package set set, e.g. pkgs.ripgrep.
+func AttrPath(set, attr string) string {
+	return nixAttrPath(attr, set, false)
+}
+
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
 
 // nixAttrPath renders attr inside package set set, quoting segments that are
