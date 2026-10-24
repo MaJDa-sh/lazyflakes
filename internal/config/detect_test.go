@@ -1,0 +1,107 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MaJDa-sh/lazyflakes/internal/generate"
+)
+
+var channels = generate.DefaultChannels(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+
+// roundTrip checks that the rendered TOML loads back into the same targets.
+func roundTrip(t *testing.T, d Detected) *Config {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(d.TOML()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("generated config does not load: %v\n%s", err, d.TOML())
+	}
+	return c
+}
+
+func TestDetectChannelNixOS(t *testing.T) {
+	d := Detect(System{
+		OS: "linux", NixOSVersion: "25.11.9586.10e7ad5bbcb4 (Xantusia)",
+		NixOSConfig: "/etc/nixos/configuration.nix", NixSystem: "x86_64-linux",
+	}, channels)
+	c := roundTrip(t, d)
+
+	sys := c.Targets["system"]
+	if c.Default != "system" || sys == nil {
+		t.Fatalf("config = %+v", c)
+	}
+	if sys.File != "/etc/nixos/lazyflakes.nix" || sys.Rebuild != "sudo nixos-rebuild switch" || sys.Attribute != "environment.systemPackages" {
+		t.Errorf("system target = %+v", sys)
+	}
+	if sys.Sets["stable"] != "pkgs" {
+		t.Errorf("a 25.11 system should map stable to pkgs: %v", sys.Sets)
+	}
+	if !strings.Contains(sys.Sets["unstable"], `fetchTarball "https://github.com/NixOS/nixpkgs/archive/nixpkgs-unstable.tar.gz"`) {
+		t.Errorf("channel configs can fetch unstable: %v", sys.Sets)
+	}
+	if !strings.Contains(d.TOML(), "nixos-25.11") {
+		t.Errorf("notes should mention the system release:\n%s", d.TOML())
+	}
+}
+
+func TestDetectFlakeNixOSAndHomeManager(t *testing.T) {
+	d := Detect(System{
+		OS: "linux", NixOSVersion: "26.11pre123.abc (Yarara)", FlakeDir: "/home/me/nixos-config", FlakeDirIsGitRepo: true,
+		HomeManagerDir: "/home/me/.config/home-manager", HomeManagerVer: "26.05", NixSystem: "aarch64-linux",
+	}, channels)
+	c := roundTrip(t, d)
+
+	sys := c.Targets["system"]
+	if sys.Rebuild != "sudo nixos-rebuild switch --flake /home/me/nixos-config" || sys.File != "/home/me/nixos-config/lazyflakes.nix" {
+		t.Errorf("system target = %+v", sys)
+	}
+	if len(sys.Sets) != 1 || sys.Sets["unstable"] != "pkgs" {
+		t.Errorf("a pure flake on unstable only gets pkgs: %v", sys.Sets)
+	}
+	toml := d.TOML()
+	for _, s := range []string{
+		`# stable = "pkgs-stable"`,
+		`inputs.nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";`,
+		`system = "aarch64-linux"`,
+	} {
+		if !strings.Contains(toml, s) {
+			t.Errorf("missing hint %q:\n%s", s, toml)
+		}
+	}
+
+	home := c.Targets["home"]
+	if home == nil || home.Kind != "home-manager" || home.Attribute != "home.packages" || home.Rebuild != "home-manager switch" {
+		t.Fatalf("home target = %+v", home)
+	}
+	if home.Sets["stable"] != "pkgs" || !strings.Contains(home.Sets["unstable"], "fetchTarball") {
+		t.Errorf("home sets = %v", home.Sets)
+	}
+	if c.Default != "system" {
+		t.Errorf("default = %q", c.Default)
+	}
+}
+
+func TestDetectDarwin(t *testing.T) {
+	d := Detect(System{OS: "darwin", HasDarwinRebuild: true, FlakeDir: "/Users/me/.config/nix-darwin", NixSystem: "aarch64-darwin"}, channels)
+	sys := roundTrip(t, d).Targets["system"]
+	if sys.Kind != "nix-darwin" || sys.Rebuild != "darwin-rebuild switch --flake /Users/me/.config/nix-darwin" {
+		t.Errorf("darwin target = %+v", sys)
+	}
+}
+
+func TestDetectNothing(t *testing.T) {
+	d := Detect(System{OS: "linux"}, channels)
+	if len(d.Config.Targets) != 0 || !strings.Contains(d.TOML(), "# [targets.system]") {
+		t.Errorf("expected an example config:\n%s", d.TOML())
+	}
+	if c := roundTrip(t, d); len(c.Targets) != 0 {
+		t.Errorf("example should load as empty: %+v", c)
+	}
+}

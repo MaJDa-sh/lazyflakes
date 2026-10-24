@@ -90,7 +90,7 @@ func renderShell(channels []Channel, pkgs []Package, opts Options) string {
 	args := make([]string, len(used))
 	for i, c := range used {
 		src := "<nixpkgs>"
-		if url, ok := tarballURL(c.Ref); ok {
+		if url, ok := TarballURL(c.Ref); ok {
 			src = fmt.Sprintf("(fetchTarball %q)", url)
 		}
 		args[i] = fmt.Sprintf("%s ? import %s %s", c.Var, src, importArgs)
@@ -220,9 +220,9 @@ func flakeInputURL(ref string) string {
 
 var githubRef = regexp.MustCompile(`^github:([^/]+)/([^/?]+)(?:/([^?]+))?$`)
 
-// tarballURL maps github:owner/repo[/ref] to a tarball for non-flake shell.nix.
-// Other refs (including "nixpkgs") fall back to the <nixpkgs> channel.
-func tarballURL(ref string) (string, bool) {
+// TarballURL maps github:owner/repo[/ref] to a tarball URL, for places that
+// fetch nixpkgs without flakes. Other refs (including "nixpkgs") have none.
+func TarballURL(ref string) (string, bool) {
 	m := githubRef.FindStringSubmatch(ref)
 	if m == nil {
 		return "", false
