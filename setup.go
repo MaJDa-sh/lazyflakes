@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -80,7 +81,7 @@ func runSetup(args []string) error {
 
 	fmt.Println("\nNext steps:")
 	for _, t := range targets {
-		if managed.Imported(t) {
+		if managed.IsImported(context.Background(), t) {
 			fmt.Printf("  • %s: %s is already imported\n", t.Name, t.File)
 			continue
 		}

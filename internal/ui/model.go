@@ -196,7 +196,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case setupDoneMsg:
-		m.openSystem()
+		return m, m.openSystem()
+
+	case importCheckedMsg:
+		m.importChecked(msg)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -323,7 +326,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "o":
 			m.openOptions()
 		case "a":
-			m.openSystem()
+			return m, m.openSystem()
 		case "enter":
 			return m, m.enterShell()
 		}
@@ -368,7 +371,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		m.openOptions()
 	case "a":
-		m.openSystem()
+		return m, m.openSystem()
 	case "enter":
 		return m, m.enterShell()
 	}

@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -33,6 +35,14 @@ type sysState struct {
 	opts     generate.Options // options already set in the module
 	exists   bool
 	imported bool
+	checking bool // asking Nix whether the module is imported
+	err      error
+}
+
+// importCheckedMsg is Nix's answer on whether file is imported.
+type importCheckedMsg struct {
+	file     string
+	imported bool
 	err      error
 }
 
@@ -46,34 +56,37 @@ type appliedMsg struct {
 type setupDoneMsg struct{ err error }
 
 // openSystem (re)reads the config and shows the system popup.
-func (m *Model) openSystem() {
+func (m *Model) openSystem() tea.Cmd {
 	m.sys = sysState{}
 	m.popup = popupSystem
 	cfg, err := config.Load(m.configPath)
 	if err != nil {
 		m.sys.err = err
-		return
+		return nil
 	}
 	m.sys.targets = cfg.Ordered()
 	if len(m.sys.targets) == 0 {
 		m.sys.err = config.ErrNoConfig
-		return
+		return nil
 	}
-	m.loadTarget(0)
+	return m.loadTarget(0)
 }
 
 // loadTarget reads target i's module and adds the current selection to it.
-func (m *Model) loadTarget(i int) {
+// The returned command asks Nix whether the module is imported; until it
+// answers, the quick text search is shown.
+func (m *Model) loadTarget(i int) tea.Cmd {
 	s := &m.sys
 	s.target, s.cursor, s.items, s.err = i, 0, nil, nil
 	t := s.targets[i]
 	mod, exists, err := managed.Read(t.File)
 	if err != nil {
 		s.err = err
-		return
+		return nil
 	}
 	s.exists, s.opts = exists, mod.Options
 	s.imported = exists && managed.Imported(t)
+	s.checking = exists
 	present := map[string]bool{}
 	for _, e := range mod.Packages {
 		s.items = append(s.items, sysItem{entry: e, orig: e.Channel})
@@ -85,6 +98,27 @@ func (m *Model) loadTarget(i int) {
 			s.items = append(s.items, sysItem{entry: managed.Entry{Channel: m.channels[sel.channel].Name, Attr: attr}})
 			present[attr] = true
 		}
+	}
+	if !exists {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		ok, err := managed.CheckImported(ctx, t)
+		return importCheckedMsg{file: t.File, imported: ok, err: err}
+	}
+}
+
+// importChecked applies Nix's answer if the popup still shows that target.
+func (m *Model) importChecked(msg importCheckedMsg) {
+	s := &m.sys
+	if m.popup != popupSystem || s.err != nil || s.targets[s.target].File != msg.file {
+		return
+	}
+	s.checking = false
+	if msg.err == nil {
+		s.imported = msg.imported
 	}
 }
 
@@ -110,9 +144,9 @@ func (m Model) handleSystemKey(key string) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		s.cursor = max(s.cursor-1, 0)
 	case "tab":
-		m.loadTarget((s.target + 1) % len(s.targets))
+		return m, m.loadTarget((s.target + 1) % len(s.targets))
 	case "shift+tab":
-		m.loadTarget((s.target + len(s.targets) - 1) % len(s.targets))
+		return m, m.loadTarget((s.target + len(s.targets) - 1) % len(s.targets))
 	case " ", "d", "x":
 		if len(s.items) == 0 {
 			break
@@ -299,6 +333,9 @@ func (m Model) systemView() string {
 	optText := dimStyle.Render("none")
 	if keys := opts.Keys(); len(keys) > 0 {
 		optText = strings.Join(keys, ", ")
+		if !t.WritesNixpkgsConfig() {
+			optText += dimStyle.Render(" (not written: nixpkgs_config = false, set them in your own config)")
+		}
 	}
 	file := displayPath(t.File)
 	if !s.exists {
@@ -313,7 +350,10 @@ func (m Model) systemView() string {
 		" "+labelStyle.Render("file     ")+file,
 		" "+labelStyle.Render("rebuild  ")+rebuild,
 	)
-	if !s.imported {
+	switch {
+	case s.checking && !s.imported:
+		lines = append(lines, "", dimStyle.Render(" checking whether "+filepath.Base(t.File)+" is imported…"))
+	case !s.imported:
 		lines = append(lines, "", " "+errStyle.Render("! ")+
 			fmt.Sprintf("not imported yet: add ./%s to imports in your configuration", filepath.Base(t.File)))
 	}

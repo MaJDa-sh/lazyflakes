@@ -1,6 +1,7 @@
 package managed
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,5 +96,75 @@ func TestEvalFlakeNixOS(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("systemPackages missing %s: %s", want, out)
 		}
+	}
+}
+
+// localNixpkgs is the nixpkgs from NIX_PATH, so tests need no download.
+func localNixpkgs(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("nix-instantiate", "--find-file", "nixpkgs").Output()
+	if err != nil {
+		t.Skip("no <nixpkgs> in NIX_PATH")
+	}
+	p, _ := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	return p
+}
+
+func TestCheckImportedFlake(t *testing.T) {
+	requireNixEval(t)
+	dir := t.TempDir()
+	tgt := &config.Target{Name: "system", Kind: "nixos", File: filepath.Join(dir, "lazyflakes.nix"),
+		Attribute: "environment.systemPackages", Flake: dir + "#test", Sets: map[string]string{"stable": "pkgs"}}
+	writeModule(t, tgt, Module{Packages: []Entry{{"stable", "hello"}}})
+	os.MkdirAll(filepath.Join(dir, "hosts", "test"), 0o755)
+	host := filepath.Join(dir, "hosts", "test", "default.nix")
+	os.WriteFile(filepath.Join(dir, "flake.nix"), []byte(`{
+  inputs.nixpkgs.url = "path:`+localNixpkgs(t)+`";
+  outputs = { nixpkgs, ... }: {
+    nixosConfigurations.test = nixpkgs.lib.nixosSystem { system = "x86_64-linux"; modules = [ ./hosts/test ]; };
+  };
+}`), 0o644)
+	exec.Command("git", "-C", dir, "init", "-q").Run()
+
+	// Only mentioned in a comment: the text search is fooled, evaluation is not.
+	os.WriteFile(host, []byte("# TODO import ../../lazyflakes.nix\n{ "+minimalNixOS+" }\n"), 0o644)
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	if !Imported(tgt) {
+		t.Fatal("expected the text search to match the comment")
+	}
+	if ok, err := CheckImported(context.Background(), tgt); err != nil || ok {
+		t.Errorf("comment only: imported=%v err=%v, want false", ok, err)
+	}
+
+	os.WriteFile(host, []byte("{ imports = [ ../../lazyflakes.nix ]; "+minimalNixOS+" }\n"), 0o644)
+	if ok, err := CheckImported(context.Background(), tgt); err != nil || !ok {
+		t.Errorf("imported from hosts/test: imported=%v err=%v, want true", ok, err)
+	}
+}
+
+func TestCheckImportedChannel(t *testing.T) {
+	requireNixEval(t)
+	dir := t.TempDir()
+	tgt := &config.Target{Name: "system", Kind: "nixos", File: filepath.Join(dir, "lazyflakes.nix"),
+		Attribute: "environment.systemPackages", Sets: map[string]string{"stable": "pkgs"}}
+	writeModule(t, tgt, Module{Packages: []Entry{{"stable", "hello"}}})
+	conf := filepath.Join(dir, "configuration.nix")
+	t.Setenv("NIX_PATH", "nixpkgs="+localNixpkgs(t)+":nixos-config="+conf)
+
+	os.WriteFile(conf, []byte("{ "+minimalNixOS+" }\n"), 0o644)
+	if ok, err := CheckImported(context.Background(), tgt); err != nil || ok {
+		t.Errorf("not imported: imported=%v err=%v", ok, err)
+	}
+	os.WriteFile(conf, []byte("{ imports = [ ./lazyflakes.nix ]; "+minimalNixOS+" }\n"), 0o644)
+	if ok, err := CheckImported(context.Background(), tgt); err != nil || !ok {
+		t.Errorf("imported: imported=%v err=%v", ok, err)
+	}
+
+	// A module outside the NIX_PATH configuration cannot be checked this way.
+	other := *tgt
+	other.File = filepath.Join(t.TempDir(), "lazyflakes.nix")
+	os.WriteFile(other.File, []byte("{ }"), 0o644)
+	if _, err := CheckImported(context.Background(), &other); err == nil {
+		t.Error("expected an error for a module outside the configuration")
 	}
 }
