@@ -30,6 +30,17 @@ Flags: `-channel stable|unstable`, `-stable <flake ref>`, `-unstable <flake ref>
 `-format flake|shell`, `-envrc=false`, `-allow unfree,insecure`, `-config <path>`.
 Most have a `LAZYFLAKES_*` environment variable, see `lazyflakes -h`.
 
+The system installs also work without the TUI:
+
+```sh
+lazyflakes add ripgrep jq          # install into the default target and rebuild
+lazyflakes add -channel unstable -allow unfree vscode
+lazyflakes remove jq
+lazyflakes list                    # what lazyflakes installed, and whether it is imported
+```
+
+(`-target NAME` picks another target, `-no-rebuild` only writes the module.)
+
 ## Installing into your system configuration
 
 Every configuration is laid out differently, so lazyflakes does not try to
@@ -43,11 +54,18 @@ rest is automatic.
 lazyflakes setup
 ```
 
-It detects NixOS (flake or `configuration.nix`), nix-darwin and standalone
+It detects NixOS (flake or `configuration.nix`), nix-darwin and
 home-manager, shows the config it proposes, writes it to
 `~/.config/lazyflakes/config.toml` and creates an empty `lazyflakes.nix`
-(using sudo if the directory is root-owned). Pressing `a` without a config
-offers to run it too.
+(using sudo, doas or run0 if the directory is root-owned). Pressing `a`
+without a config offers to run it too.
+
+Flakes are evaluated to find their `nixosConfigurations`,
+`darwinConfigurations` and `homeConfigurations`, so flake-parts and similar
+layouts are recognised. The configuration named after the machine is used;
+`-host NAME` picks another one and `-flake DIR` points setup at a flake
+outside the usual places (`/etc/nixos`, `~/nixos-config`, `~/.dotfiles`, …).
+With several hosts each gets its own module, e.g. `lazyflakes-laptop.nix`.
 
 ### 2. Import the module once
 
@@ -57,14 +75,16 @@ imports = [ ./lazyflakes.nix ];
 ```
 
 then rebuild once. From now on select packages, press `a`, review the
-changes and press `enter`.
+changes and press `enter`. The install popup (and `lazyflakes list`) asks Nix
+whether the module really is part of your configuration and warns if not.
 
 ### What happens on apply
 
 The TUI hands the terminal to a small script (so sudo can ask for your
 password) that
 
-1. writes `lazyflakes.nix`, with sudo only when the file is not writable,
+1. writes `lazyflakes.nix`, with sudo (or the configured command) only when
+   the file is not writable,
 2. `git add --intent-to-add`s it if it is new in a git repo (flakes only see tracked files),
 3. runs the target's `rebuild` command,
 4. and if the rebuild fails, **restores the previous `lazyflakes.nix`**, so a
@@ -74,11 +94,14 @@ password) that
 
 ```toml
 default = "system"
+sudo = "sudo"                         # or "doas", "run0": writes root-owned files
 
 [targets.system]
 kind = "nixos"                        # nixos, nix-darwin or home-manager
 file = "/etc/nixos/lazyflakes.nix"    # the module lazyflakes owns
 rebuild = "sudo nixos-rebuild switch" # empty: only write the file
+# flake = "/etc/nixos#laptop"         # flake output, lets lazyflakes check the import
+# nixpkgs_config = false              # never write nixpkgs.config.* (see below)
 # attribute = "environment.systemPackages"  # default for the kind
 
 [targets.system.sets]
@@ -116,4 +139,21 @@ and set `unstable = "pkgs-unstable"` under the target's `sets`.
 
 Options enabled with `o` (allow unfree, …) are written into the module as
 `nixpkgs.config.* = lib.mkDefault …`, so a value set in your own
-configuration still wins.
+configuration still wins. Configurations that bring their own pkgs
+(`nixpkgs.pkgs`, `readOnlyPkgs`, home-manager's `useGlobalPkgs`) ignore or
+reject `nixpkgs.config`; set `nixpkgs_config = false` for them and allow
+unfree in your own configuration instead. Setup does this automatically for
+flake hosts that set `nixpkgs.pkgs`.
+
+## Development
+
+```sh
+go test ./...                                   # unit tests
+LAZYFLAKES_NIX_EVAL=1 go test ./internal/managed  # evaluate generated modules with nix
+LAZYFLAKES_E2E=1 go test -run E2E .              # build real NixOS and home-manager configs
+LAZYFLAKES_E2E=1 LAZYFLAKES_VM=1 go test -run VirtualMachine .  # boot a NixOS VM (needs KVM)
+```
+
+The end-to-end tests drive the `lazyflakes` binary against temporary
+configurations and build them with `nixos-rebuild build` / `nix build`; they
+use the nixpkgs from `NIX_PATH` and never touch the running system.
