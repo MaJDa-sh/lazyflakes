@@ -17,6 +17,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
+		if err := runSetup(os.Args[2:]); err != nil {
+			fail(err)
+		}
+		return
+	}
+
 	channels := generate.DefaultChannels(time.Now())
 	flag.StringVar(&channels[0].Ref, "unstable", channels[0].Ref, "flake reference of the unstable channel")
 	flag.StringVar(&channels[1].Ref, "stable", channels[1].Ref, "flake reference of the stable channel (default: latest NixOS release)")
@@ -26,6 +33,10 @@ func main() {
 	envrc := flag.Bool("envrc", os.Getenv("LAZYFLAKES_ENVRC") != "0", "also write a direnv .envrc (env LAZYFLAKES_ENVRC=0 to disable)")
 	allowFlag := flag.String("allow", os.Getenv("LAZYFLAKES_ALLOW"), "comma-separated nixpkgs options to enable: unfree,insecure,broken,unsupported (env LAZYFLAKES_ALLOW)")
 	dir := flag.String("dir", ".", "directory to write generated files into")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  lazyflakes [flags]   browse nixpkgs\n  lazyflakes setup     detect your system configuration and write the config\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	format, err := generate.ParseFormat(*formatFlag)
