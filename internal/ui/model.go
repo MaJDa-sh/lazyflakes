@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -300,7 +301,7 @@ func (m *Model) write(overwrite bool) {
 		m.status = "error: " + err.Error()
 	default:
 		m.popup = popupNone
-		m.status = fmt.Sprintf("wrote %s · %s", displayPath(path), f.Hint())
+		m.status = fmt.Sprintf("wrote ./%s · %s", filepath.Base(path), f.Hint())
 	}
 }
 

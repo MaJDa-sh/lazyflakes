@@ -96,8 +96,7 @@ func (m Model) generateView() string {
 
 func (m Model) confirmView() string {
 	f := generate.Formats[m.genCursor]
-	path := displayPath(filepath.Join(m.dir, f.Filename()))
-	msg := " " + path + " already exists. Overwrite it?"
+	msg := " ./" + f.Filename() + " already exists. Overwrite it?"
 	w := min(m.width-4, ansi.StringWidth(msg)+4)
 	return panel("Overwrite?", "y yes · n no", []string{"", msg, ""}, w, 5, true)
 }
@@ -255,12 +254,20 @@ func (m Model) footerView() string {
 		parts[i] = keyStyle.Render(k[0]) + " " + k[1]
 	}
 	left := " " + strings.Join(parts, dimStyle.Render(" │ "))
-	right := dimStyle.Render(m.status + " ")
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		return left
+	// The status matters more than the key hints (they are also in the panels'
+	// muscle memory), so hints get cut first when space runs out.
+	status := m.status
+	if strings.HasPrefix(status, "error") {
+		status = errStyle.Render(status)
+	} else if strings.HasPrefix(status, "wrote") {
+		status = markStyle.Render(status)
+	} else {
+		status = dimStyle.Render(status)
 	}
-	return left + strings.Repeat(" ", gap) + right
+	status = ansi.Truncate(status, m.width-2, "…") + " "
+	left = ansi.Truncate(left, max(0, m.width-lipgloss.Width(status)-1), "…")
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(status)
+	return left + strings.Repeat(" ", max(0, gap)) + status
 }
 
 func padTo(s string, w int) string {
