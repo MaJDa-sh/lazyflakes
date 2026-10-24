@@ -48,19 +48,19 @@ func (f Format) Hint() string {
 	return "run `nix-shell`"
 }
 
-// Render returns the file contents for attrs, pinned to flakeRef where possible.
-func Render(f Format, attrs []string, flakeRef string) string {
+// Render returns the file contents for pkgs, each taken from its channel.
+func Render(f Format, channels []Channel, pkgs []Package) string {
 	if f == Flake {
-		return renderFlake(attrs, flakeRef)
+		return renderFlake(channels, pkgs)
 	}
-	return renderShell(attrs, flakeRef)
+	return renderShell(channels, pkgs)
 }
 
 // ErrExists is returned by Write when the file exists and overwrite is false.
 var ErrExists = errors.New("file already exists")
 
 // Write renders the format into dir and returns the written path.
-func Write(dir string, f Format, attrs []string, flakeRef string, overwrite bool) (string, error) {
+func Write(dir string, f Format, channels []Channel, pkgs []Package, overwrite bool) (string, error) {
 	path := filepath.Join(dir, f.Filename())
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if !overwrite {
@@ -73,63 +73,114 @@ func Write(dir string, f Format, attrs []string, flakeRef string, overwrite bool
 	if err != nil {
 		return path, err
 	}
-	if _, err := file.WriteString(Render(f, attrs, flakeRef)); err != nil {
+	if _, err := file.WriteString(Render(f, channels, pkgs)); err != nil {
 		file.Close()
 		return path, err
 	}
 	return path, file.Close()
 }
 
-func renderShell(attrs []string, flakeRef string) string {
-	src := "import <nixpkgs> { }"
-	if url, ok := tarballURL(flakeRef); ok {
-		src = fmt.Sprintf("import (fetchTarball %q) { }", url)
+func renderShell(channels []Channel, pkgs []Package) string {
+	used := usedChannels(channels, pkgs)
+	args := make([]string, len(used))
+	for i, c := range used {
+		src := "import <nixpkgs> { }"
+		if url, ok := tarballURL(c.Ref); ok {
+			src = fmt.Sprintf("import (fetchTarball %q) { }", url)
+		}
+		args[i] = fmt.Sprintf("%s ? %s", c.Var, src)
 	}
-	return fmt.Sprintf(`{ pkgs ? %s }:
+	head := "{ " + args[0] + " }:"
+	if len(args) > 1 {
+		head = "{ " + strings.Join(args, "\n, ") + "\n}:"
+	}
+	return fmt.Sprintf(`%s
 
-pkgs.mkShell {
-  packages = with pkgs; [
-%s  ];
+%s.mkShell {
+  packages = %s;
 }
-`, src, packageLines(attrs, "    "))
+`, head, used[0].Var, packagesExpr(channels, pkgs, "  "))
 }
 
-func renderFlake(attrs []string, flakeRef string) string {
+func renderFlake(channels []Channel, pkgs []Package) string {
+	used := usedChannels(channels, pkgs)
+	var inputs, args, sets, vars []string
+	for _, c := range used {
+		inputs = append(inputs, fmt.Sprintf("    %s.url = %q;", c.Input, flakeInputURL(c.Ref)))
+		args = append(args, c.Input)
+		sets = append(sets, fmt.Sprintf("        %s = %s.legacyPackages.${system};", c.Var, c.Input))
+		vars = append(vars, c.Var)
+	}
 	return fmt.Sprintf(`{
   description = "Development shell";
 
-  inputs.nixpkgs.url = %q;
+  inputs = {
+%s
+  };
 
-  outputs = { nixpkgs, ... }:
+  outputs = { %s, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      forAllSystems = f: %s.lib.genAttrs systems (system: f {
+%s
+      });
     in
     {
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs; [
-%s          ];
+      devShells = forAllSystems ({ %s }: {
+        default = %s.mkShell {
+          packages = %s;
         };
       });
     };
 }
-`, flakeInputURL(flakeRef), packageLines(attrs, "            "))
+`, strings.Join(inputs, "\n"), strings.Join(args, ", "), used[0].Input,
+		strings.Join(sets, "\n"), strings.Join(vars, ", "), used[0].Var,
+		packagesExpr(channels, pkgs, "          "))
 }
 
-func packageLines(attrs []string, indent string) string {
-	var b strings.Builder
-	for _, a := range attrs {
-		b.WriteString(indent + nixAttrPath(a) + "\n")
+// usedChannels returns the channels referenced by pkgs, in channel order. The
+// first one also provides mkShell. With no packages the first channel is used.
+func usedChannels(channels []Channel, pkgs []Package) []Channel {
+	seen := make([]bool, len(channels))
+	for _, p := range pkgs {
+		seen[p.Channel] = true
 	}
+	var used []Channel
+	for i, c := range channels {
+		if seen[i] {
+			used = append(used, c)
+		}
+	}
+	if len(used) == 0 {
+		used = channels[:1]
+	}
+	return used
+}
+
+// packagesExpr renders the package list. A single channel gets the idiomatic
+// `with pkgs; [ … ]`; mixed channels prefix every attr with its package set.
+// indent is the indentation of the line the expression starts on.
+func packagesExpr(channels []Channel, pkgs []Package, indent string) string {
+	used := usedChannels(channels, pkgs)
+	var b strings.Builder
+	if len(used) == 1 {
+		b.WriteString("with " + used[0].Var + "; [\n")
+	} else {
+		b.WriteString("[\n")
+	}
+	for _, p := range pkgs {
+		b.WriteString(indent + "  " + nixAttrPath(p.Attr, channels[p.Channel].Var, len(used) == 1) + "\n")
+	}
+	b.WriteString(indent + "]")
 	return b.String()
 }
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
 
-// nixAttrPath quotes segments that are not valid Nix identifiers. A quoted
-// first segment cannot be resolved through `with pkgs;`, so it is prefixed.
-func nixAttrPath(attr string) string {
+// nixAttrPath renders attr inside package set set, quoting segments that are
+// not valid Nix identifiers. Under `with set;` the prefix is only needed when
+// the first segment is quoted, since that cannot be resolved through `with`.
+func nixAttrPath(attr, set string, with bool) string {
 	segs := strings.Split(attr, ".")
 	quoted := false
 	for i, s := range segs {
@@ -139,8 +190,8 @@ func nixAttrPath(attr string) string {
 		}
 	}
 	path := strings.Join(segs, ".")
-	if quoted {
-		return "pkgs." + path
+	if quoted || !with {
+		return set + "." + path
 	}
 	return path
 }
@@ -227,14 +278,18 @@ func WriteEnvrc(dir string, f Format) (path string, changed bool, err error) {
 	return path, true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
 }
 
-// ShellExpr is a one-line mkShell expression for `nix develop --impure --expr`,
-// built from the same flake the packages were browsed from.
-func ShellExpr(attrs []string, flakeRef string) string {
-	segs := make([]string, len(attrs))
-	for i, a := range attrs {
-		segs[i] = nixAttrPath(a)
+// ShellExpr is a one-line mkShell expression for `nix develop --impure --expr`
+// that takes every package from its channel's flake.
+func ShellExpr(channels []Channel, pkgs []Package) string {
+	used := usedChannels(channels, pkgs)
+	var lets []string
+	for _, c := range used {
+		lets = append(lets, fmt.Sprintf("%s = (builtins.getFlake %q).legacyPackages.${builtins.currentSystem};", c.Var, c.Ref))
 	}
-	return fmt.Sprintf(`let pkgs = (builtins.getFlake %q).legacyPackages.${builtins.currentSystem}; `+
-		`in pkgs.mkShell { name = "lazyflakes"; packages = with pkgs; [ %s ]; }`,
-		flakeRef, strings.Join(segs, " "))
+	attrs := make([]string, len(pkgs))
+	for i, p := range pkgs {
+		attrs[i] = nixAttrPath(p.Attr, channels[p.Channel].Var, false)
+	}
+	return fmt.Sprintf(`let %s in %s.mkShell { name = "lazyflakes"; packages = [ %s ]; }`,
+		strings.Join(lets, " "), used[0].Var, strings.Join(attrs, " "))
 }

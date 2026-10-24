@@ -12,7 +12,17 @@ import (
 	"github.com/MaJDa-sh/lazyflakes/internal/generate"
 )
 
-const searchHeight = 3
+const (
+	searchHeight = 3
+	versionWidth = 12 // width of each channel's version column
+)
+
+var channelColors = []lipgloss.Color{"2", "3", "5", "6"}
+
+// channelStyle colors everything that belongs to channel c the same way.
+func channelStyle(c int) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(channelColors[c%len(channelColors)])
+}
 
 // Layout, lazygit style:
 //
@@ -29,9 +39,7 @@ func (m Model) View() string {
 		return ""
 	}
 	if m.loading {
-		msg := m.spinner.View() + " " + m.status + "…\n\n" +
-			dimStyle.Render("the first evaluation of nixpkgs can take a minute")
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, msg)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.loadingView())
 	}
 	if m.err != nil {
 		msg := errStyle.Render("error: ") + m.err.Error() + "\n\n" +
@@ -62,6 +70,24 @@ func (m Model) View() string {
 		screen = overlayCenter(screen, m.confirmView(), m.width, m.height)
 	}
 	return screen
+}
+
+func (m Model) loadingView() string {
+	lines := []string{m.spinner.View() + " " + m.status + " package sets…", ""}
+	for i, c := range m.channels {
+		l := m.loads[i]
+		switch {
+		case l.err != nil:
+			lines = append(lines, errStyle.Render("✗ ")+c.Name)
+		case l.done:
+			lines = append(lines, markStyle.Render("✓ ")+l.info)
+		default:
+			lines = append(lines, m.spinner.View()+" "+channelStyle(i).Render(c.Name)+" "+dimStyle.Render(c.Ref))
+		}
+	}
+	lines = append(lines, "", dimStyle.Render("the first evaluation of a channel can take a minute"))
+	// Left-align the lines as one block; Place would center each line.
+	return lipgloss.NewStyle().Align(lipgloss.Left).Render(strings.Join(lines, "\n"))
 }
 
 // generateView is the format menu with a live preview of the file.
@@ -95,7 +121,7 @@ func (m Model) generateView() string {
 	if _, err := os.Stat(filepath.Join(m.dir, f.Filename())); err == nil {
 		lines[len(lines)-1] += errStyle.Render(" (" + f.Filename() + " exists, will ask before overwriting)")
 	}
-	for _, l := range strings.Split(generate.Render(f, m.selectedAttrs(), m.flakeRef), "\n") {
+	for _, l := range strings.Split(generate.Render(f, m.channels, m.selectedPackages()), "\n") {
 		lines = append(lines, " "+l)
 	}
 	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · e .envrc · esc cancel", lines, w, h, true)
@@ -138,8 +164,10 @@ func displayPath(path string) string {
 	return path
 }
 
+// listHeight is the number of package rows: the panel minus its borders and
+// the column header.
 func (m Model) listHeight() int {
-	return m.height - 1 - searchHeight - 2
+	return m.height - 1 - searchHeight - 2 - 1
 }
 
 func (m Model) searchView(w int) string {
@@ -149,18 +177,32 @@ func (m Model) searchView(w int) string {
 
 func (m Model) packagesView(w, h int) string {
 	inner := w - 2
-	rows := h - 2
-	lines := make([]string, 0, rows)
-	for i := m.offset; i < len(m.filtered) && len(lines) < rows; i++ {
-		p := m.pkgs[m.filtered[i]]
-		mark := "  "
-		if m.isSelected(m.filtered[i]) {
-			mark = markStyle.Render("● ")
+	attrW := max(10, inner-2-len(m.channels)*(versionWidth+1))
+
+	header := "  " + padTo("attr", attrW)
+	for c, ch := range m.channels {
+		name := padLeft(ch.Name, versionWidth)
+		if c == m.channel {
+			header += " " + channelStyle(c).Bold(true).Underline(true).Render(name)
+		} else {
+			header += " " + dimStyle.Render(name)
 		}
-		version := p.Version
-		gap := inner - 2 - len(p.Attr) - len(version)
+	}
+	lines := []string{dimStyle.Render(header[:2+attrW]) + header[2+attrW:]}
+
+	for i := m.offset; i < len(m.filtered) && len(lines) < h-2; i++ {
+		p := m.filtered[i]
+		attr := padTo(ansi.Truncate(m.pkgs[p].Attr, attrW, "…"), attrW)
+		mark := "  "
+		if s := m.selectionOf(p); s >= 0 {
+			mark = channelStyle(m.selected[s].channel).Bold(true).Render("● ")
+		}
+
 		if i == m.cursor {
-			text := p.Attr + strings.Repeat(" ", max(1, gap)) + version
+			text := attr
+			for c := range m.channels {
+				text += " " + padLeft(versionCell(m.versions[p][c]), versionWidth)
+			}
 			style := cursorDimStyle
 			if m.focus != focusSelected {
 				style = cursorStyle
@@ -168,7 +210,17 @@ func (m Model) packagesView(w, h int) string {
 			lines = append(lines, mark+style.Render(padTo(text, inner-2)))
 			continue
 		}
-		lines = append(lines, mark+attrStyle.Render(p.Attr)+strings.Repeat(" ", max(1, gap))+dimStyle.Render(version))
+
+		row := mark + attrStyle.Render(attr)
+		for c := range m.channels {
+			v := m.versions[p][c]
+			cell := padLeft(versionCell(v), versionWidth)
+			if v == "" || c != m.channel {
+				cell = dimStyle.Render(cell)
+			}
+			row += " " + cell
+		}
+		lines = append(lines, row)
 	}
 	if len(m.filtered) == 0 {
 		lines = append(lines, dimStyle.Render("  no packages match"))
@@ -183,6 +235,14 @@ func (m Model) packagesView(w, h int) string {
 		footer = fmt.Sprintf("%d of %d", m.cursor+1, len(m.filtered))
 	}
 	return panel(title, footer, lines, w, h, m.focus != focusSelected)
+}
+
+// versionCell is a version truncated to its column, or "—" when missing.
+func versionCell(v string) string {
+	if v == "" {
+		return "—"
+	}
+	return ansi.Truncate(v, versionWidth, "…")
 }
 
 func (m Model) detailsView(w, h int) string {
@@ -202,10 +262,15 @@ func (m Model) detailsView(w, h int) string {
 	lines := []string{
 		field("attr", attrStyle.Render(pkg.Attr)),
 		field("pname", pkg.Pname),
-		field("version", pkg.Version),
-		"",
-		labelStyle.Render("description"),
 	}
+	for c, ch := range m.channels {
+		v := m.versions[p][c]
+		if v == "" {
+			v = dimStyle.Render("not available")
+		}
+		lines = append(lines, channelStyle(c).Bold(true).Render(fmt.Sprintf("%-9s", ch.Name))+v)
+	}
+	lines = append(lines, "", labelStyle.Render("description"))
 	desc := pkg.Description
 	if desc == "" {
 		desc = dimStyle.Render("no description")
@@ -213,7 +278,7 @@ func (m Model) detailsView(w, h int) string {
 	lines = append(lines, wrap(desc, inner)...)
 	lines = append(lines, "",
 		labelStyle.Render("try it"),
-		dimStyle.Render("$ ")+fmt.Sprintf("nix shell %s#%s", m.flakeRef, pkg.Attr),
+		dimStyle.Render("$ ")+fmt.Sprintf("nix shell %s#%s", m.channels[m.channelFor(p)].Ref, pkg.Attr),
 	)
 	for i := range lines {
 		lines[i] = " " + lines[i]
@@ -222,16 +287,20 @@ func (m Model) detailsView(w, h int) string {
 }
 
 func (m Model) selectedView(w, h int) string {
+	inner := w - 2
 	lines := make([]string, 0, len(m.selected))
 	// Keep the selected cursor visible in the small panel.
 	rows := h - 2
 	start := max(0, m.selCursor-rows+1)
 	for i := start; i < len(m.selected); i++ {
-		attr := m.pkgs[m.selected[i]].Attr
+		s := m.selected[i]
+		tag := m.channels[s.channel].Name + " " + m.versions[s.pkg][s.channel]
+		attr := ansi.Truncate(m.pkgs[s.pkg].Attr, max(1, inner-3-ansi.StringWidth(tag)), "…")
+		gap := strings.Repeat(" ", max(1, inner-2-ansi.StringWidth(attr)-ansi.StringWidth(tag)))
 		if i == m.selCursor && m.focus == focusSelected {
-			lines = append(lines, " "+cursorStyle.Render(padTo(attr, w-3)))
+			lines = append(lines, " "+cursorStyle.Render(attr+gap+tag)+" ")
 		} else {
-			lines = append(lines, " "+markStyle.Render(attr))
+			lines = append(lines, " "+markStyle.Render(attr)+gap+channelStyle(s.channel).Render(tag))
 		}
 	}
 	if len(lines) == 0 {
@@ -246,9 +315,9 @@ func (m Model) footerView() string {
 	case focusSearch:
 		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "packages"}, {"q", "quit"}}
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "packages"}, {"q", "quit"}}
 	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
 	}
 	switch m.popup {
 	case popupGenerate:
@@ -275,6 +344,13 @@ func (m Model) footerView() string {
 	left = ansi.Truncate(left, max(0, m.width-lipgloss.Width(status)-1), "…")
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(status)
 	return left + strings.Repeat(" ", max(0, gap)) + status
+}
+
+func padLeft(s string, w int) string {
+	if n := lipgloss.Width(s); n < w {
+		return strings.Repeat(" ", w-n) + s
+	}
+	return s
 }
 
 func padTo(s string, w int) string {

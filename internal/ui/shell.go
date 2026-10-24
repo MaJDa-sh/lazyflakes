@@ -14,23 +14,23 @@ import (
 )
 
 type shellExitedMsg struct {
-	attrs []string
-	err   error
+	labels []string
+	err    error
 }
 
 // shellCmd runs `nix develop` for the given packages in the user's $SHELL while
 // Bubble Tea has released the terminal, like lazygit does for subprocesses.
 type shellCmd struct {
 	cmd    *exec.Cmd
-	attrs  []string
+	labels []string
 	stdin  io.Reader
 	stdout io.Writer
 }
 
-func newShellCmd(attrs []string, flakeRef string) *shellCmd {
+func newShellCmd(labels []string, expr string) *shellCmd {
 	args := []string{
 		"--extra-experimental-features", "nix-command flakes",
-		"develop", "--impure", "--expr", generate.ShellExpr(attrs, flakeRef),
+		"develop", "--impure", "--expr", expr,
 	}
 	// Without -c, nix develop starts bash; prefer the user's own shell.
 	if sh := os.Getenv("SHELL"); sh != "" {
@@ -38,7 +38,7 @@ func newShellCmd(attrs []string, flakeRef string) *shellCmd {
 	}
 	cmd := exec.Command("nix", args...)
 	cmd.Env = append(os.Environ(), "LAZYFLAKES_SHELL=1")
-	return &shellCmd{cmd: cmd, attrs: attrs}
+	return &shellCmd{cmd: cmd, labels: labels}
 }
 
 func (s *shellCmd) SetStdin(r io.Reader)  { s.stdin, s.cmd.Stdin = r, r }
@@ -47,7 +47,7 @@ func (s *shellCmd) SetStderr(w io.Writer) { s.cmd.Stderr = w }
 
 func (s *shellCmd) Run() error {
 	fmt.Fprintf(s.stdout, "lazyflakes: entering nix shell with %s\n(type `exit` to return)\n\n",
-		strings.Join(s.attrs, ", "))
+		strings.Join(s.labels, ", "))
 	err := s.cmd.Run()
 	if err != nil {
 		// Keep nix's error on screen until the user has read it; the alt screen
@@ -61,15 +61,22 @@ func (s *shellCmd) Run() error {
 // enterShell suspends the TUI and opens a shell with the selected packages,
 // or the package under the cursor when nothing is selected.
 func (m *Model) enterShell() tea.Cmd {
-	attrs := m.selectedAttrs()
-	if len(attrs) == 0 {
+	sel := m.selected
+	if len(sel) == 0 {
 		p, ok := m.current()
 		if !ok {
 			return nil
 		}
-		attrs = []string{m.pkgs[p].Attr}
+		sel = []selection{{pkg: p, channel: m.channelFor(p)}}
 	}
-	return tea.Exec(newShellCmd(attrs, m.flakeRef), func(err error) tea.Msg {
-		return shellExitedMsg{attrs: attrs, err: err}
+	labels := make([]string, len(sel))
+	pkgs := make([]generate.Package, len(sel))
+	for i, s := range sel {
+		labels[i] = m.label(s)
+		pkgs[i] = generate.Package{Attr: m.pkgs[s.pkg].Attr, Channel: s.channel}
+	}
+	expr := generate.ShellExpr(m.channels, pkgs)
+	return tea.Exec(newShellCmd(labels, expr), func(err error) tea.Msg {
+		return shellExitedMsg{labels: labels, err: err}
 	})
 }

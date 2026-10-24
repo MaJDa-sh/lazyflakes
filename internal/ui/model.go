@@ -39,24 +39,41 @@ const (
 )
 
 type loadedMsg struct {
-	pkgs   []nix.Package
-	cached bool
-	took   time.Duration
-	err    error
+	channel int
+	pkgs    []nix.Package
+	cached  bool
+	took    time.Duration
+	err     error
+}
+
+// channelLoad tracks loading one channel's package list.
+type channelLoad struct {
+	done bool
+	pkgs []nix.Package
+	info string // "from cache in 300ms", shown in the status line
+	err  error
+}
+
+// selection is a package marked for the shell, taken from one channel.
+type selection struct {
+	pkg     int // index into pkgs
+	channel int // index into channels
 }
 
 type Model struct {
-	flakeRef string
+	channels []generate.Channel
+	channel  int    // channel new selections are taken from
 	refresh  bool   // ignore the cache on the first load
 	dir      string // where generated files are written
 
-	pkgs     []nix.Package
+	pkgs     []nix.Package // union of all channels, sorted by attr
+	versions [][]string    // versions[pkg][channel], "" when missing
 	index    *search.Index
 	filtered []int // indices into pkgs, ranked by the current query
 	cursor   int   // position in filtered
 	offset   int   // first visible row of filtered
 
-	selected  []int // indices into pkgs, in the order they were marked
+	selected  []selection // in the order they were marked
 	selCursor int
 
 	popup     popup
@@ -67,6 +84,7 @@ type Model struct {
 	spinner spinner.Model
 	focus   focus
 
+	loads   []channelLoad
 	loading bool
 	status  string
 	err     error
@@ -74,7 +92,7 @@ type Model struct {
 	width, height int
 }
 
-func New(flakeRef string, refresh bool, dir string, format generate.Format, envrc bool) Model {
+func New(channels []generate.Channel, channel int, refresh bool, dir string, format generate.Format, envrc bool) Model {
 	in := textinput.New()
 	in.Prompt = " "
 	in.Placeholder = "type / to search packages…"
@@ -82,23 +100,40 @@ func New(flakeRef string, refresh bool, dir string, format generate.Format, envr
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	m := Model{flakeRef: flakeRef, refresh: refresh, dir: dir, genCursor: int(format), envrc: envrc, input: in, spinner: sp, loading: true}
-	m.status = "loading " + flakeRef
+	return Model{
+		channels: channels, channel: channel, refresh: refresh, dir: dir,
+		genCursor: int(format), envrc: envrc, input: in, spinner: sp,
+	}.startLoading(refresh)
+}
+
+func (m Model) Init() tea.Cmd {
+	return m.loadAll(m.refresh)
+}
+
+// startLoading resets the per-channel load state; loadAll starts the loads.
+func (m Model) startLoading(refresh bool) Model {
+	m.loading = true
+	m.loads = make([]channelLoad, len(m.channels))
+	m.status = "loading"
 	if refresh {
-		m.status = "refreshing " + flakeRef
+		m.status = "refreshing"
 	}
 	return m
 }
 
-func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, load(m.flakeRef, m.refresh))
+func (m Model) loadAll(refresh bool) tea.Cmd {
+	cmds := []tea.Cmd{m.spinner.Tick}
+	for i, c := range m.channels {
+		cmds = append(cmds, load(i, c.Ref, refresh))
+	}
+	return tea.Batch(cmds...)
 }
 
-func load(flakeRef string, refresh bool) tea.Cmd {
+func load(channel int, flakeRef string, refresh bool) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
 		pkgs, cached, err := nix.Load(context.Background(), flakeRef, refresh)
-		return loadedMsg{pkgs: pkgs, cached: cached, took: time.Since(start), err: err}
+		return loadedMsg{channel: channel, pkgs: pkgs, cached: cached, took: time.Since(start), err: err}
 	}
 }
 
@@ -118,21 +153,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case loadedMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.err = msg.err
-			return m, nil
-		}
-		m.err = nil
-		m.pkgs = msg.pkgs
-		m.index = search.NewIndex(m.pkgs)
-		m.selected = nil
-		m.refilter()
-		src := "evaluated"
-		if msg.cached {
-			src = "from cache"
-		}
-		m.status = fmt.Sprintf("%d packages %s in %s", len(m.pkgs), src, msg.took.Round(time.Millisecond))
+		m.loadedChannel(msg)
 		return m, nil
 
 	case tea.MouseMsg:
@@ -150,7 +171,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = "error: shell exited: " + msg.err.Error()
 		} else {
-			m.status = "back from shell with " + strings.Join(msg.attrs, ", ")
+			m.status = "back from shell with " + strings.Join(msg.labels, ", ")
 		}
 		return m, nil
 
@@ -160,12 +181,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// loadedChannel records one channel's result and builds the catalog once
+// every channel has finished loading.
+func (m *Model) loadedChannel(msg loadedMsg) {
+	src := "evaluated"
+	if msg.cached {
+		src = "from cache"
+	}
+	m.loads[msg.channel] = channelLoad{
+		done: true, pkgs: msg.pkgs, err: msg.err,
+		info: fmt.Sprintf("%s %s in %s", m.channels[msg.channel].Name, src, msg.took.Round(time.Millisecond)),
+	}
+
+	lists := make([][]nix.Package, len(m.loads))
+	var infos []string
+	var errs []error
+	for i, l := range m.loads {
+		if !l.done {
+			return
+		}
+		if l.err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", m.channels[i].Name, l.err))
+		}
+		lists[i] = l.pkgs
+		infos = append(infos, l.info)
+	}
+
+	m.loading = false
+	m.err = errors.Join(errs...)
+	if m.err != nil {
+		return
+	}
+	m.pkgs, m.versions = merge(lists)
+	m.index = search.NewIndex(m.pkgs)
+	m.selected = nil
+	m.refilter()
+	m.status = fmt.Sprintf("%d packages · %s", len(m.pkgs), strings.Join(infos, ", "))
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "ctrl+c" {
 		return m, tea.Quit
 	}
 	if m.loading {
+		if key == "q" {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if key == "ctrl+r" && (m.err != nil || m.popup == popupNone && m.focus != focusSearch) {
+		m = m.startLoading(true)
+		m.err = nil
+		return m, m.loadAll(true)
+	}
+	if m.err != nil {
 		if key == "q" {
 			return m, tea.Quit
 		}
@@ -214,6 +284,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.selected = append(m.selected[:m.selCursor], m.selected[m.selCursor+1:]...)
 				m.selCursor = min(m.selCursor, max(0, len(m.selected)-1))
 			}
+		case "c":
+			if len(m.selected) > 0 {
+				m.cycleSelectionChannel(m.selCursor)
+			}
 		case "/":
 			return m.focusSearch()
 		case "w":
@@ -254,14 +328,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggle(p)
 			m.move(1)
 		}
+	case "c":
+		m.channel = (m.channel + 1) % len(m.channels)
+		m.status = "new selections come from " + m.channels[m.channel].Name
 	case "w":
 		m.openGenerate()
 	case "enter":
 		return m, m.enterShell()
-	case "ctrl+r":
-		m.loading = true
-		m.status = "refreshing " + m.flakeRef
-		return m, tea.Batch(m.spinner.Tick, load(m.flakeRef, true))
 	}
 	return m, nil
 }
@@ -309,7 +382,7 @@ func (m *Model) openGenerate() {
 // write generates the chosen file in m.dir, asking before replacing one.
 func (m *Model) write(overwrite bool) {
 	f := generate.Formats[m.genCursor]
-	path, err := generate.Write(m.dir, f, m.selectedAttrs(), m.flakeRef, overwrite)
+	path, err := generate.Write(m.dir, f, m.channels, m.selectedPackages(), overwrite)
 	switch {
 	case errors.Is(err, generate.ErrExists):
 		m.popup = popupConfirm
@@ -345,12 +418,17 @@ func (m *Model) writeEnvrc(f generate.Format) {
 	m.status = fmt.Sprintf("wrote ./%s %s · %s", f.Filename(), envrc, next)
 }
 
-func (m Model) selectedAttrs() []string {
-	attrs := make([]string, len(m.selected))
-	for i, p := range m.selected {
-		attrs[i] = m.pkgs[p].Attr
+func (m Model) selectedPackages() []generate.Package {
+	pkgs := make([]generate.Package, len(m.selected))
+	for i, s := range m.selected {
+		pkgs[i] = generate.Package{Attr: m.pkgs[s.pkg].Attr, Channel: s.channel}
 	}
-	return attrs
+	return pkgs
+}
+
+// label names a package with its channel, e.g. "jq (stable)".
+func (m Model) label(s selection) string {
+	return fmt.Sprintf("%s (%s)", m.pkgs[s.pkg].Attr, m.channels[s.channel].Name)
 }
 
 func (m Model) focusSearch() (tea.Model, tea.Cmd) {
@@ -399,22 +477,53 @@ func (m Model) current() (int, bool) {
 	return m.filtered[m.cursor], true
 }
 
-func (m Model) isSelected(p int) bool {
-	for _, s := range m.selected {
-		if s == p {
-			return true
+// channelFor picks the channel to take package p from: the default channel
+// when it has the package, otherwise the first channel that does.
+func (m Model) channelFor(p int) int {
+	if m.versions[p][m.channel] != "" {
+		return m.channel
+	}
+	for c, v := range m.versions[p] {
+		if v != "" {
+			return c
 		}
 	}
-	return false
+	return m.channel
+}
+
+// selectionOf returns the position of p in m.selected, or -1.
+func (m Model) selectionOf(p int) int {
+	for i, s := range m.selected {
+		if s.pkg == p {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Model) toggle(p int) {
-	for i, s := range m.selected {
-		if s == p {
-			m.selected = append(m.selected[:i], m.selected[i+1:]...)
-			m.selCursor = min(m.selCursor, max(0, len(m.selected)-1))
+	if i := m.selectionOf(p); i >= 0 {
+		m.selected = append(m.selected[:i], m.selected[i+1:]...)
+		m.selCursor = min(m.selCursor, max(0, len(m.selected)-1))
+		return
+	}
+	c := m.channelFor(p)
+	if c != m.channel {
+		m.status = fmt.Sprintf("%s is not in %s, added from %s", m.pkgs[p].Attr, m.channels[m.channel].Name, m.channels[c].Name)
+	}
+	m.selected = append(m.selected, selection{pkg: p, channel: c})
+}
+
+// cycleSelectionChannel moves selection i to the next channel that has it.
+func (m *Model) cycleSelectionChannel(i int) {
+	s := &m.selected[i]
+	for step := 1; step < len(m.channels); step++ {
+		c := (s.channel + step) % len(m.channels)
+		if m.versions[s.pkg][c] != "" {
+			s.channel = c
+			m.status = m.label(*s)
 			return
 		}
 	}
-	m.selected = append(m.selected, p)
+	m.status = fmt.Sprintf("%s is only in %s", m.pkgs[s.pkg].Attr, m.channels[s.channel].Name)
 }
