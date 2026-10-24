@@ -246,9 +246,9 @@ func (m Model) footerView() string {
 	case focusSearch:
 		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"w", "write nix file"}, {"tab", "packages"}, {"q", "quit"}}
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "packages"}, {"q", "quit"}}
 	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"w", "write nix file"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"enter", "shell"}, {"w", "write nix file"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
 	}
 	switch m.popup {
 	case popupGenerate:

@@ -226,3 +226,15 @@ func WriteEnvrc(dir string, f Format) (path string, changed bool, err error) {
 	}
 	return path, true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
 }
+
+// ShellExpr is a one-line mkShell expression for `nix develop --impure --expr`,
+// built from the same flake the packages were browsed from.
+func ShellExpr(attrs []string, flakeRef string) string {
+	segs := make([]string, len(attrs))
+	for i, a := range attrs {
+		segs[i] = nixAttrPath(a)
+	}
+	return fmt.Sprintf(`let pkgs = (builtins.getFlake %q).legacyPackages.${builtins.currentSystem}; `+
+		`in pkgs.mkShell { name = "lazyflakes"; packages = with pkgs; [ %s ]; }`,
+		flakeRef, strings.Join(segs, " "))
+}

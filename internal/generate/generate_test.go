@@ -81,3 +81,12 @@ func TestWriteEnvrc(t *testing.T) {
 		t.Fatalf("append: content=%q", read())
 	}
 }
+
+func TestShellExpr(t *testing.T) {
+	got := ShellExpr([]string{"jq", "gtk+3"}, "nixpkgs")
+	want := `let pkgs = (builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem}; ` +
+		`in pkgs.mkShell { name = "lazyflakes"; packages = with pkgs; [ jq pkgs."gtk+3" ]; }`
+	if got != want {
+		t.Errorf("ShellExpr:\n got %s\nwant %s", got, want)
+	}
+}

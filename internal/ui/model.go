@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -145,6 +146,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case shellExitedMsg:
+		if msg.err != nil {
+			m.status = "error: shell exited: " + msg.err.Error()
+		} else {
+			m.status = "back from shell with " + strings.Join(msg.attrs, ", ")
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -209,6 +218,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.focusSearch()
 		case "w":
 			m.openGenerate()
+		case "enter":
+			return m, m.enterShell()
 		}
 		return m, nil
 	}
@@ -245,6 +256,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "w":
 		m.openGenerate()
+	case "enter":
+		return m, m.enterShell()
 	case "ctrl+r":
 		m.loading = true
 		m.status = "refreshing " + m.flakeRef
