@@ -56,10 +56,17 @@ func writable(file string) bool {
 // Flakes only see tracked files, so a new module must be added first.
 func needsGitAdd(file string) bool {
 	dir := filepath.Dir(file)
-	if exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Run() != nil {
+	if git(dir, "rev-parse", "--is-inside-work-tree").Run() != nil {
 		return false
 	}
-	return exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", filepath.Base(file)).Run() != nil
+	return git(dir, "ls-files", "--error-unmatch", "--", filepath.Base(file)).Run() != nil
+}
+
+// git runs git in dir. Marking dir as a safe directory lets the user read a
+// root-owned repository such as /etc/nixos, which git otherwise refuses as
+// "dubious ownership".
+func git(dir string, args ...string) *exec.Cmd {
+	return exec.Command("git", append([]string{"-c", "safe.directory=" + dir, "-C", dir}, args...)...)
 }
 
 // Script is a POSIX shell script that installs the new module, rebuilds and,
@@ -85,9 +92,10 @@ fail() { printf '\n\033[1;31m==>\033[0m %s\n' "$*"; rm -f "$backup"; exit 1; }
 step "writing $file"
 ` + sudo + `install -m 0644 "$new" "$file" || fail "could not write $file"
 `)
+	gitCmd := sudo + "git -c safe.directory=" + shq(dir) + " -C " + shq(dir)
 	if p.GitAdd {
 		b.WriteString(`step "git add --intent-to-add ` + name + ` (flakes only see tracked files)"
-` + sudo + `git -C ` + shq(dir) + ` add --intent-to-add -- ` + shq(name) + `
+` + gitCmd + ` add --intent-to-add -- ` + shq(name) + `
 `)
 	}
 	if p.Rebuild {
@@ -99,7 +107,7 @@ if ! sh -c ` + shq(p.Target.Rebuild) + `; then
     ` + sudo + `rm -f "$file"
 `)
 		if p.GitAdd {
-			b.WriteString(`    ` + sudo + `git -C ` + shq(dir) + ` rm -q --cached --ignore-unmatch -- ` + shq(name) + "\n")
+			b.WriteString(`    ` + gitCmd + ` rm -q --cached --ignore-unmatch -- ` + shq(name) + "\n")
 		}
 		b.WriteString(`  fi
   fail "rebuild failed, restored the previous $file"

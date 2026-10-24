@@ -171,3 +171,12 @@ func TestApplyScriptGit(t *testing.T) {
 		t.Errorf("module should be tracked after apply: err=%v ls-files=%q", err, git("ls-files"))
 	}
 }
+
+func TestScriptMarksRepoSafe(t *testing.T) {
+	dir := t.TempDir()
+	p := Plan{Target: target(filepath.Join(dir, "lazyflakes.nix")), NewFile: "/tmp/x", GitAdd: true, Rebuild: true}
+	p.Target.Rebuild = "true"
+	if !strings.Contains(p.Script(), "git -c safe.directory='"+dir+"' -C '"+dir+"' add --intent-to-add") {
+		t.Errorf("git in the script must mark the repo safe:\n%s", p.Script())
+	}
+}
