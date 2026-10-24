@@ -10,7 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kacper/lazyflakes/internal/generate"
+	"github.com/MaJDa-sh/lazyflakes/internal/generate"
 )
 
 type shellExitedMsg struct {

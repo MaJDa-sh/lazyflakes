@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/kacper/lazyflakes/internal/generate"
+	"github.com/MaJDa-sh/lazyflakes/internal/generate"
 )
 
 const searchHeight = 3

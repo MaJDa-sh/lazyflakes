@@ -1,4 +1,4 @@
-module github.com/kacper/lazyflakes
+module github.com/MaJDa-sh/lazyflakes
 
 go 1.26.2
 

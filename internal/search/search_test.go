@@ -3,7 +3,7 @@ package search
 import (
 	"testing"
 
-	"github.com/kacper/lazyflakes/internal/nix"
+	"github.com/MaJDa-sh/lazyflakes/internal/nix"
 )
 
 func TestFilterRanking(t *testing.T) {

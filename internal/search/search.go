@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kacper/lazyflakes/internal/nix"
+	"github.com/MaJDa-sh/lazyflakes/internal/nix"
 )
 
 // Index holds lowercased copies of the searchable fields so filtering on every

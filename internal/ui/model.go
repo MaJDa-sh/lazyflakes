@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kacper/lazyflakes/internal/generate"
-	"github.com/kacper/lazyflakes/internal/nix"
-	"github.com/kacper/lazyflakes/internal/search"
+	"github.com/MaJDa-sh/lazyflakes/internal/generate"
+	"github.com/MaJDa-sh/lazyflakes/internal/nix"
+	"github.com/MaJDa-sh/lazyflakes/internal/search"
 )
 
 // focus is the panel that currently receives key presses (lazygit calls these
