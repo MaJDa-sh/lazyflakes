@@ -17,11 +17,13 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "setup" {
-		if err := runSetup(os.Args[2:]); err != nil {
-			fail(err)
+	if len(os.Args) > 1 {
+		if run, ok := subcommands[os.Args[1]]; ok {
+			if err := run(os.Args[2:]); err != nil {
+				fail(err)
+			}
+			return
 		}
-		return
 	}
 
 	channels := generate.DefaultChannels(time.Now())
@@ -35,7 +37,13 @@ func main() {
 	configPath := flag.String("config", defaultConfigPath(), "config file with the system targets (see `lazyflakes setup`)")
 	dir := flag.String("dir", ".", "directory to write generated files into")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  lazyflakes [flags]   browse nixpkgs\n  lazyflakes setup     detect your system configuration and write the config\n\nFlags:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n"+
+			"  lazyflakes [flags]          browse nixpkgs\n"+
+			"  lazyflakes setup            detect your system configuration and write the config\n"+
+			"  lazyflakes add ATTR...      install packages into the default target and rebuild\n"+
+			"  lazyflakes remove ATTR...   remove packages installed through lazyflakes\n"+
+			"  lazyflakes list             show what lazyflakes installed\n"+
+			"\nRun a command with -h for its flags.\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -61,6 +69,13 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fail(err)
 	}
+}
+
+var subcommands = map[string]func(args []string) error{
+	"setup":  runSetup,
+	"add":    func(args []string) error { return runChange(args, false) },
+	"remove": func(args []string) error { return runChange(args, true) },
+	"list":   runList,
 }
 
 func envOr(key, fallback string) string {
