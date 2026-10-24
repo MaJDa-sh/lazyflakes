@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNixAttrPath(t *testing.T) {
@@ -88,5 +89,22 @@ func TestShellExpr(t *testing.T) {
 		`in pkgs.mkShell { name = "lazyflakes"; packages = with pkgs; [ jq pkgs."gtk+3" ]; }`
 	if got != want {
 		t.Errorf("ShellExpr:\n got %s\nwant %s", got, want)
+	}
+}
+
+func TestStableBranch(t *testing.T) {
+	cases := map[string]string{
+		"2026-10-24": "nixos-26.05",
+		"2026-06-01": "nixos-26.05",
+		"2026-05-31": "nixos-25.11",
+		"2026-12-01": "nixos-26.11",
+		"2027-01-15": "nixos-26.11",
+		"2100-02-01": "nixos-99.11",
+	}
+	for date, want := range cases {
+		d, _ := time.Parse(time.DateOnly, date)
+		if got := StableBranch(d); got != want {
+			t.Errorf("StableBranch(%s) = %s, want %s", date, got, want)
+		}
 	}
 }
