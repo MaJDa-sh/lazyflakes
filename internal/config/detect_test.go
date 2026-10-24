@@ -30,7 +30,7 @@ func TestDetectChannelNixOS(t *testing.T) {
 	d := Detect(System{
 		OS: "linux", NixOSVersion: "25.11.9586.10e7ad5bbcb4 (Xantusia)",
 		NixOSConfig: "/etc/nixos/configuration.nix", NixSystem: "x86_64-linux",
-	}, channels)
+	}, channels, "")
 	c := roundTrip(t, d)
 
 	sys := c.Targets["system"]
@@ -53,13 +53,14 @@ func TestDetectChannelNixOS(t *testing.T) {
 
 func TestDetectFlakeNixOSAndHomeManager(t *testing.T) {
 	d := Detect(System{
-		OS: "linux", NixOSVersion: "26.11pre123.abc (Yarara)", FlakeDir: "/home/me/nixos-config", FlakeDirIsGitRepo: true,
-		HomeManagerDir: "/home/me/.config/home-manager", HomeManagerVer: "26.05", NixSystem: "aarch64-linux",
-	}, channels)
+		OS: "linux", NixOSVersion: "26.11pre123.abc (Yarara)", Sudo: "sudo", NixSystem: "aarch64-linux",
+		Flakes:         []*Flake{{Dir: "/home/me/nixos-config", GitRepo: true, NixOS: []FlakeHost{{Name: "laptop"}}}},
+		HomeManagerDir: "/home/me/.config/home-manager", HomeManagerVer: "26.05",
+	}, channels, "")
 	c := roundTrip(t, d)
 
 	sys := c.Targets["system"]
-	if sys.Rebuild != "sudo nixos-rebuild switch --flake /home/me/nixos-config" || sys.File != "/home/me/nixos-config/lazyflakes.nix" {
+	if sys.Rebuild != "sudo nixos-rebuild switch --flake /home/me/nixos-config#laptop" || sys.File != "/home/me/nixos-config/lazyflakes.nix" || sys.Flake != "/home/me/nixos-config#laptop" {
 		t.Errorf("system target = %+v", sys)
 	}
 	if len(sys.Sets) != 1 || sys.Sets["unstable"] != "pkgs" {
@@ -70,9 +71,10 @@ func TestDetectFlakeNixOSAndHomeManager(t *testing.T) {
 		`# stable = "pkgs-stable"`,
 		`inputs.nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";`,
 		`system = "aarch64-linux"`,
+		"git-added",
 	} {
 		if !strings.Contains(toml, s) {
-			t.Errorf("missing hint %q:\n%s", s, toml)
+			t.Errorf("missing %q:\n%s", s, toml)
 		}
 	}
 
@@ -88,16 +90,71 @@ func TestDetectFlakeNixOSAndHomeManager(t *testing.T) {
 	}
 }
 
-func TestDetectDarwin(t *testing.T) {
-	d := Detect(System{OS: "darwin", HasDarwinRebuild: true, FlakeDir: "/Users/me/.config/nix-darwin", NixSystem: "aarch64-darwin"}, channels)
+func TestDetectSystemAndHomeFlakes(t *testing.T) {
+	d := Detect(System{
+		OS: "linux", NixOSVersion: "25.11.1", Sudo: "doas", User: "me", Hostname: "laptop", HasHomeManager: true,
+		Flakes: []*Flake{
+			{Dir: "/etc/nixos", NixOS: []FlakeHost{{Name: "desktop"}, {Name: "laptop", PkgsSet: true}}},
+			{Dir: "/home/me/.config/home-manager", Home: []FlakeHost{{Name: "other"}, {Name: "me@laptop"}}},
+		},
+	}, channels, "")
+	c := roundTrip(t, d)
+
+	if c.Sudo != "doas" {
+		t.Errorf("sudo = %q", c.Sudo)
+	}
+	sys := c.Targets["system"]
+	if sys.Flake != "/etc/nixos#laptop" || sys.File != "/etc/nixos/lazyflakes-laptop.nix" || sys.Rebuild != "doas nixos-rebuild switch --flake /etc/nixos#laptop" {
+		t.Errorf("the host matching the hostname should be picked: %+v", sys)
+	}
+	if sys.WritesNixpkgsConfig() {
+		t.Error("a host that sets nixpkgs.pkgs must get nixpkgs_config = false")
+	}
+	home := c.Targets["home"]
+	if home == nil || home.Flake != "/home/me/.config/home-manager#me@laptop" || home.Rebuild != "home-manager switch --flake /home/me/.config/home-manager#me@laptop" || home.File != "/home/me/.config/home-manager/lazyflakes.nix" {
+		t.Errorf("home target = %+v", home)
+	}
+
+	// -host overrides the hostname match; one flake holding both kinds
+	// keeps the two modules apart.
+	d = Detect(System{
+		OS: "linux", NixOSVersion: "25.11.1", Sudo: "sudo", User: "me", Hostname: "laptop",
+		Flakes: []*Flake{{Dir: "/cfg", NixOS: []FlakeHost{{Name: "desktop"}, {Name: "laptop"}}, Home: []FlakeHost{{Name: "me"}}}},
+	}, channels, "desktop")
+	c = roundTrip(t, d)
+	if c.Targets["system"].Flake != "/cfg#desktop" {
+		t.Errorf("-host desktop: %+v", c.Targets["system"])
+	}
+	if h := c.Targets["home"]; h.File != "/cfg/lazyflakes-home.nix" || !strings.HasPrefix(h.Rebuild, "nix run github:nix-community/home-manager -- switch --flake /cfg#me") {
+		t.Errorf("home in the system flake: %+v", h)
+	}
+}
+
+func TestDetectUnevaluatedFlake(t *testing.T) {
+	d := Detect(System{
+		OS: "linux", NixOSVersion: "25.11.1", Sudo: "sudo",
+		Flakes: []*Flake{{Dir: "/etc/nixos", NixOS: []FlakeHost{{}}, EvalErr: "boom"}},
+	}, channels, "")
 	sys := roundTrip(t, d).Targets["system"]
-	if sys.Kind != "nix-darwin" || sys.Rebuild != "darwin-rebuild switch --flake /Users/me/.config/nix-darwin" {
+	if sys.Flake != "" || sys.Rebuild != "sudo nixos-rebuild switch --flake /etc/nixos" {
+		t.Errorf("unknown host names fall back to the bare flake: %+v", sys)
+	}
+	if !strings.Contains(d.TOML(), "could not evaluate the flake (boom)") {
+		t.Errorf("the evaluation error should be explained:\n%s", d.TOML())
+	}
+}
+
+func TestDetectDarwin(t *testing.T) {
+	d := Detect(System{OS: "darwin", HasDarwinRebuild: true, Sudo: "sudo", NixSystem: "aarch64-darwin",
+		Flakes: []*Flake{{Dir: "/Users/me/.config/nix-darwin", Darwin: []FlakeHost{{Name: "mac"}}}}}, channels, "")
+	sys := roundTrip(t, d).Targets["system"]
+	if sys.Kind != "nix-darwin" || sys.Rebuild != "sudo darwin-rebuild switch --flake /Users/me/.config/nix-darwin#mac" {
 		t.Errorf("darwin target = %+v", sys)
 	}
 }
 
 func TestDetectNothing(t *testing.T) {
-	d := Detect(System{OS: "linux"}, channels)
+	d := Detect(System{OS: "linux"}, channels, "")
 	if len(d.Config.Targets) != 0 || !strings.Contains(d.TOML(), "# [targets.system]") {
 		t.Errorf("expected an example config:\n%s", d.TOML())
 	}

@@ -51,20 +51,24 @@ file = "~/.config/home-manager/lazyflakes.nix"
 	}
 }
 
-func TestLoadSudoAndNixpkgsConfig(t *testing.T) {
+func TestLoadSudoFlakeAndNixpkgsConfig(t *testing.T) {
 	c, err := Load(writeConfig(t, `
 sudo = "doas"
 [targets.laptop]
 kind = "nixos"
 file = "/etc/nixos/lazyflakes.nix"
+flake = "/etc/nixos#laptop"
 nixpkgs_config = false
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
 	l := c.Targets["laptop"]
-	if l.Sudo != "doas" || l.WritesNixpkgsConfig() {
+	if l.Sudo != "doas" || l.Flake != "/etc/nixos#laptop" || l.WritesNixpkgsConfig() {
 		t.Errorf("laptop = %+v", l)
+	}
+	if _, err := Load(writeConfig(t, "[targets.x]\nkind = \"nixos\"\nfile = \"/x.nix\"\nflake = \"/etc/nixos\"\n")); err == nil {
+		t.Error("a flake without #name should be rejected")
 	}
 }
 

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MaJDa-sh/lazyflakes/internal/generate"
 )
@@ -17,52 +21,155 @@ import (
 // System is what Detect needs to know about the machine. Inspect fills it in;
 // tests construct it directly.
 type System struct {
-	OS                string // runtime.GOOS
-	Home              string
-	NixOSVersion      string // `nixos-version` output, "" when not NixOS
-	NixOSConfig       string // path of configuration.nix, "" when none
-	FlakeDir          string // directory of a flake with nixos/darwinConfigurations
-	HomeManagerDir    string // standalone home-manager config dir, "" when none
-	HomeManagerFlake  bool   // HomeManagerDir contains a flake.nix
-	HomeManagerVer    string // `home-manager --version` output
-	HasDarwinRebuild  bool
-	FlakeDirIsGitRepo bool
-	NixSystem         string // e.g. "x86_64-linux"
+	OS               string // runtime.GOOS
+	Home             string
+	User             string
+	Hostname         string
+	Sudo             string   // first available of sudo, doas and run0
+	NixOSVersion     string   // `nixos-version` output, "" when not NixOS
+	NixOSConfig      string   // path of configuration.nix, "" when none
+	Flakes           []*Flake // configuration flakes, in FlakeDirs order
+	HomeManagerDir   string   // standalone, non-flake home-manager config dir
+	HomeManagerVer   string   // `home-manager --version` output
+	HasHomeManager   bool     // the home-manager command is installed
+	HasDarwinRebuild bool
+	NixSystem        string // e.g. "x86_64-linux"
 }
 
-// flakeDirs are the usual places people keep a system flake.
-var flakeDirs = []string{"/etc/nixos", "~/nixos-config", "~/.dotfiles", "~/dotfiles", "~/nixos", "~/.config/nixos", "~/.nixos", "~/.config/nix-darwin"}
+// Flake is a flake that defines system or home configurations.
+type Flake struct {
+	Dir     string
+	GitRepo bool
+	// Hosts per kind of configuration. A host with an empty name means the
+	// flake could not be evaluated and was only recognised by its text.
+	NixOS, Darwin, Home []FlakeHost
+	EvalErr             string // why evaluation failed, when it did
+}
 
-// Inspect looks at the running machine.
-func Inspect() System {
-	sys := System{OS: runtime.GOOS, NixSystem: nixSystem(runtime.GOOS, runtime.GOARCH)}
+// FlakeHost is one configuration in a flake.
+type FlakeHost struct {
+	Name string
+	// PkgsSet means the configuration sets nixpkgs.pkgs (or uses
+	// readOnlyPkgs), so nixpkgs.config would be ignored or rejected.
+	PkgsSet bool
+}
+
+// FlakeDirs are the usual places people keep a configuration flake.
+var FlakeDirs = []string{"/etc/nixos", "~/nixos-config", "~/.dotfiles", "~/dotfiles", "~/nixos", "~/.config/nixos", "~/.nixos", "~/.config/nix-darwin", "~/.config/home-manager"}
+
+// Inspect looks at the running machine. flakeDir, when set, is the only
+// directory searched for a configuration flake.
+func Inspect(flakeDir string) System {
+	sys := System{OS: runtime.GOOS, NixSystem: nixSystem(runtime.GOOS, runtime.GOARCH), Sudo: DefaultSudo}
 	sys.Home, _ = os.UserHomeDir()
+	sys.User = os.Getenv("USER")
+	sys.Hostname, _ = os.Hostname()
 	sys.NixOSVersion = output("nixos-version")
-	_, err := exec.LookPath("darwin-rebuild")
-	sys.HasDarwinRebuild = err == nil
-
-	if sys.NixOSVersion != "" {
-		sys.NixOSConfig = nixosConfigPath()
-	}
-	for _, d := range flakeDirs {
-		d = ExpandHome(d)
-		data, err := os.ReadFile(filepath.Join(d, "flake.nix"))
-		if err == nil && (strings.Contains(string(data), "nixosConfigurations") || strings.Contains(string(data), "darwinConfigurations")) {
-			sys.FlakeDir = d
-			sys.FlakeDirIsGitRepo = exec.Command("git", "-C", d, "rev-parse").Run() == nil
+	sys.HasDarwinRebuild = installed("darwin-rebuild")
+	sys.HasHomeManager = installed("home-manager")
+	for _, s := range []string{"sudo", "doas", "run0"} {
+		if installed(s) {
+			sys.Sudo = s
 			break
 		}
 	}
-	if _, err := exec.LookPath("home-manager"); err == nil {
-		d := ExpandHome("~/.config/home-manager")
-		if _, err := os.Stat(d); err == nil {
-			sys.HomeManagerDir = d
-			_, err := os.Stat(filepath.Join(d, "flake.nix"))
-			sys.HomeManagerFlake = err == nil
-			sys.HomeManagerVer = output("home-manager", "--version")
+	if sys.NixOSVersion != "" {
+		sys.NixOSConfig = nixosConfigPath()
+	}
+
+	dirs := FlakeDirs
+	if flakeDir != "" {
+		dirs = []string{flakeDir}
+	}
+	for _, d := range dirs {
+		if f := inspectFlake(ExpandHome(d)); f != nil {
+			sys.Flakes = append(sys.Flakes, f)
 		}
 	}
+
+	if sys.HasHomeManager {
+		d := ExpandHome("~/.config/home-manager")
+		_, noFlake := os.Stat(filepath.Join(d, "flake.nix"))
+		if _, err := os.Stat(d); err == nil && noFlake != nil {
+			sys.HomeManagerDir = d
+		}
+		sys.HomeManagerVer = output("home-manager", "--version")
+	}
 	return sys
+}
+
+// inspectFlake reads the configurations a flake in dir defines, or returns
+// nil when there is no such flake.
+func inspectFlake(dir string) *Flake {
+	src, err := os.ReadFile(filepath.Join(dir, "flake.nix"))
+	if err != nil {
+		return nil
+	}
+	f := &Flake{Dir: dir}
+	ref := "path:" + dir
+	if exec.Command("git", "-c", "safe.directory="+dir, "-C", dir, "rev-parse").Run() == nil {
+		f.GitRepo = true
+		ref = "git+file://" + dir
+	}
+	if err := evalFlake(f, ref); err != nil {
+		// Fall back to recognising the outputs by name in flake.nix.
+		f.EvalErr = err.Error()
+		unknown := []FlakeHost{{}}
+		if strings.Contains(string(src), "nixosConfigurations") {
+			f.NixOS = unknown
+		}
+		if strings.Contains(string(src), "darwinConfigurations") {
+			f.Darwin = unknown
+		}
+		if strings.Contains(string(src), "homeConfigurations") {
+			f.Home = unknown
+		}
+	}
+	if len(f.NixOS)+len(f.Darwin)+len(f.Home) == 0 {
+		return nil
+	}
+	return f
+}
+
+// flakeExpr lists a flake's configurations. nixpkgs.pkgs counts as set when
+// it is defined above option-default priority (1500).
+const flakeExpr = `let
+  f = builtins.getFlake %q;
+  hosts = out: pkgsSet: if f ? ${out} then map (n: { name = n; pkgsSet = pkgsSet f.${out}.${n}; }) (builtins.attrNames f.${out}) else [ ];
+  nixosPkgsSet = c: (c.options.nixpkgs.pkgs.highestPrio or 1500) < 1500;
+in {
+  nixos = hosts "nixosConfigurations" nixosPkgsSet;
+  darwin = hosts "darwinConfigurations" (c: false);
+  home = hosts "homeConfigurations" (c: false);
+}`
+
+func evalFlake(f *Flake, ref string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "nix", "--extra-experimental-features", "nix-command flakes",
+		"eval", "--impure", "--json", "--expr", fmt.Sprintf(flakeExpr, ref))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, lastLine(stderr.String()))
+	}
+	var res struct{ NixOS, Darwin, Home []FlakeHost }
+	if err := json.Unmarshal(out, &res); err != nil {
+		return err
+	}
+	f.NixOS, f.Darwin, f.Home = res.NixOS, res.Darwin, res.Home
+	return nil
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+func installed(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 // nixosConfigPath finds configuration.nix via NIX_PATH or the default path.
@@ -119,53 +226,84 @@ func releaseChannel(version string) (channel, release string) {
 }
 
 // Detect proposes targets for the machine. Channels define the refs that
-// non-system package sets are fetched from.
-func Detect(sys System, channels []generate.Channel) Detected {
-	d := Detected{Config: &Config{Targets: map[string]*Target{}}, Hints: map[string][]string{}}
+// non-system package sets are fetched from; host, when set, picks the
+// flake configuration to use.
+func Detect(sys System, channels []generate.Channel, host string) Detected {
+	d := Detected{Config: &Config{Targets: map[string]*Target{}, Sudo: sys.Sudo}, Hints: map[string][]string{}}
+	if d.Config.Sudo == "" {
+		d.Config.Sudo = DefaultSudo
+	}
+	sudo := d.Config.Sudo + " "
+	systemFile := "lazyflakes.nix"
 
-	switch {
-	case sys.NixOSVersion != "" && sys.FlakeDir != "":
+	switch f := sys.flakeWith(func(f *Flake) []FlakeHost { return f.NixOS }); {
+	case sys.NixOSVersion != "" && f != nil:
 		own, release := releaseChannel(sys.NixOSVersion)
-		t := &Target{
-			Name: "system", Kind: "nixos", File: filepath.Join(sys.FlakeDir, "lazyflakes.nix"),
-			Rebuild: "sudo nixos-rebuild switch --flake " + sys.FlakeDir,
+		h := d.pickHost(f.NixOS, host, "NixOS", sys.Hostname)
+		if len(f.NixOS) > 1 {
+			systemFile = "lazyflakes-" + h.Name + ".nix"
 		}
+		t := &Target{Name: "system", Kind: "nixos", File: filepath.Join(f.Dir, systemFile)}
+		t.Flake, t.Rebuild = flakeOutput(f.Dir, h.Name), sudo+"nixos-rebuild switch --flake "+flakeRef(f.Dir, h.Name)
 		d.addPureSets(t, own, channels, "nixpkgs.lib.nixosSystem", sys.NixSystem)
-		d.add(t)
-		d.Notes = append(d.Notes, fmt.Sprintf("NixOS %s with a flake in %s", release, sys.FlakeDir))
-		d.noteRelease(own, release)
-		if sys.FlakeDirIsGitRepo {
-			d.Notes = append(d.Notes, "the flake is a git repo: lazyflakes.nix is git-added (intent-to-add) when first written")
+		if h.PkgsSet {
+			off := false
+			t.NixpkgsConfig = &off
+			d.Notes = append(d.Notes, fmt.Sprintf("%s sets nixpkgs.pkgs itself, so options like allow unfree are not written (nixpkgs_config = false)", h.Name))
 		}
+		d.add(t)
+		d.Notes = append(d.Notes, fmt.Sprintf("NixOS %s with a flake in %s", release, f.Dir))
+		d.noteRelease(own, release)
+		d.noteFlake(f)
 	case sys.NixOSVersion != "" && sys.NixOSConfig != "":
 		own, release := releaseChannel(sys.NixOSVersion)
 		t := &Target{
 			Name: "system", Kind: "nixos", File: filepath.Join(filepath.Dir(sys.NixOSConfig), "lazyflakes.nix"),
-			Rebuild: "sudo nixos-rebuild switch",
+			Rebuild: sudo + "nixos-rebuild switch",
 		}
 		addImpureSets(t, own, channels)
 		d.add(t)
 		d.Notes = append(d.Notes, fmt.Sprintf("NixOS %s configured by %s (channels)", release, sys.NixOSConfig))
 		d.noteRelease(own, release)
-	case sys.OS == "darwin" && sys.HasDarwinRebuild && sys.FlakeDir != "":
-		t := &Target{
-			Name: "system", Kind: "nix-darwin", File: filepath.Join(sys.FlakeDir, "lazyflakes.nix"),
-			Rebuild: "darwin-rebuild switch --flake " + sys.FlakeDir,
+	case sys.OS == "darwin" && sys.HasDarwinRebuild && sys.flakeWith(func(f *Flake) []FlakeHost { return f.Darwin }) != nil:
+		f := sys.flakeWith(func(f *Flake) []FlakeHost { return f.Darwin })
+		h := d.pickHost(f.Darwin, host, "nix-darwin", sys.Hostname)
+		if len(f.Darwin) > 1 {
+			systemFile = "lazyflakes-" + h.Name + ".nix"
 		}
+		t := &Target{Name: "system", Kind: "nix-darwin", File: filepath.Join(f.Dir, systemFile)}
+		// Recent nix-darwin activates as root.
+		t.Flake, t.Rebuild = flakeOutput(f.Dir, h.Name), sudo+"darwin-rebuild switch --flake "+flakeRef(f.Dir, h.Name)
 		d.addPureSets(t, "unstable", channels, "nix-darwin.lib.darwinSystem", sys.NixSystem)
 		d.add(t)
-		d.Notes = append(d.Notes, "nix-darwin with a flake in "+sys.FlakeDir)
+		d.Notes = append(d.Notes, "nix-darwin with a flake in "+f.Dir)
+		d.noteFlake(f)
 	}
 
-	if sys.HomeManagerDir != "" {
+	switch f := sys.flakeWith(func(f *Flake) []FlakeHost { return f.Home }); {
+	case f != nil:
+		own, _ := releaseChannel(sys.HomeManagerVer)
+		h := d.pickHost(f.Home, "", "home-manager", sys.User+"@"+sys.Hostname, sys.User)
+		file := "lazyflakes.nix"
+		if d.Config.Targets["system"] != nil && filepath.Dir(d.Config.Targets["system"].File) == f.Dir {
+			file = "lazyflakes-home.nix" // the system module lives next to it
+		}
+		hm := "home-manager"
+		if !sys.HasHomeManager {
+			hm = "nix run github:nix-community/home-manager --"
+		}
+		t := &Target{Name: "home", Kind: "home-manager", File: filepath.Join(f.Dir, file)}
+		t.Flake, t.Rebuild = flakeOutput(f.Dir, h.Name), hm+" switch --flake "+flakeRef(f.Dir, h.Name)
+		d.addPureSets(t, own, channels, "home-manager.lib.homeManagerConfiguration", sys.NixSystem)
+		d.add(t)
+		d.Notes = append(d.Notes, "home-manager configurations in the flake in "+f.Dir)
+		if d.Config.Targets["system"] == nil {
+			d.noteFlake(f)
+		}
+	case sys.HomeManagerDir != "":
 		own, _ := releaseChannel(sys.HomeManagerVer)
 		t := &Target{Name: "home", Kind: "home-manager", File: filepath.Join(sys.HomeManagerDir, "lazyflakes.nix"), Rebuild: "home-manager switch"}
-		if sys.HomeManagerFlake {
-			t.Rebuild += " --flake " + sys.HomeManagerDir
-			d.addPureSets(t, own, channels, "home-manager.lib.homeManagerConfiguration", sys.NixSystem)
-		} else {
-			addImpureSets(t, own, channels)
-		}
+		addImpureSets(t, own, channels)
 		d.add(t)
 		d.Notes = append(d.Notes, "standalone home-manager in "+sys.HomeManagerDir)
 	}
@@ -174,6 +312,65 @@ func Detect(sys System, channels []generate.Channel) Detected {
 		d.Notes = append(d.Notes, "no NixOS, nix-darwin or home-manager configuration found; edit the example below")
 	}
 	return d
+}
+
+// flakeWith returns the first flake that has hosts of the given kind.
+func (sys System) flakeWith(hosts func(*Flake) []FlakeHost) *Flake {
+	for _, f := range sys.Flakes {
+		if len(hosts(f)) > 0 {
+			return f
+		}
+	}
+	return nil
+}
+
+// pickHost chooses the configuration to manage: the one named by want,
+// else the first matching one of the preferred names, else the only one,
+// else the first.
+func (d *Detected) pickHost(hosts []FlakeHost, want, kind string, preferred ...string) FlakeHost {
+	names := make([]string, len(hosts))
+	for i, h := range hosts {
+		names[i] = h.Name
+	}
+	for _, name := range append([]string{want}, preferred...) {
+		for _, h := range hosts {
+			if name != "" && h.Name == name {
+				return h
+			}
+		}
+	}
+	if want != "" {
+		d.Notes = append(d.Notes, fmt.Sprintf("%s configuration %q not found (have %s)", kind, want, strings.Join(names, ", ")))
+	}
+	if len(hosts) > 1 {
+		d.Notes = append(d.Notes, fmt.Sprintf("several %s configurations (%s): using %q, run setup -host NAME for another", kind, strings.Join(names, ", "), hosts[0].Name))
+	}
+	return hosts[0]
+}
+
+// flakeRef is dir#name, or just dir when the name is unknown.
+func flakeRef(dir, name string) string {
+	if name == "" {
+		return dir
+	}
+	return dir + "#" + name
+}
+
+// flakeOutput is the Target.Flake value: dir#name, or "" when unknown.
+func flakeOutput(dir, name string) string {
+	if name == "" {
+		return ""
+	}
+	return dir + "#" + name
+}
+
+func (d *Detected) noteFlake(f *Flake) {
+	if f.EvalErr != "" {
+		d.Notes = append(d.Notes, "could not evaluate the flake ("+f.EvalErr+"); recognised it by its text instead")
+	}
+	if f.GitRepo {
+		d.Notes = append(d.Notes, "the flake is a git repo: the module is git-added (intent-to-add) when first written")
+	}
 }
 
 func (d *Detected) add(t *Target) {
@@ -267,11 +464,18 @@ func (d Detected) TOML() string {
 	}
 
 	fmt.Fprintf(&b, "\ndefault = %s\n", tomlString(d.Config.Default))
+	fmt.Fprintf(&b, "sudo = %s # used to write root-owned files: sudo, doas, run0, …\n", tomlString(d.Config.Sudo))
 	for _, t := range d.Config.Ordered() {
 		fmt.Fprintf(&b, "\n[targets.%s]\n", t.Name)
 		fmt.Fprintf(&b, "kind = %s\n", tomlString(t.Kind))
 		fmt.Fprintf(&b, "file = %s\n", tomlString(t.File))
 		fmt.Fprintf(&b, "rebuild = %s\n", tomlString(t.Rebuild))
+		if t.Flake != "" {
+			fmt.Fprintf(&b, "flake = %s\n", tomlString(t.Flake))
+		}
+		if !t.WritesNixpkgsConfig() {
+			b.WriteString("nixpkgs_config = false # the configuration sets its own pkgs\n")
+		}
 		fmt.Fprintf(&b, "# attribute = %s\n", tomlString(t.Attribute))
 		fmt.Fprintf(&b, "\n[targets.%s.sets]\n", t.Name)
 		names := make([]string, 0, len(t.Sets))

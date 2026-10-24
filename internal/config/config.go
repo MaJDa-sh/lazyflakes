@@ -29,6 +29,9 @@ type Target struct {
 	Attribute string            `toml:"attribute"` // defaults to the kind's package list
 	Rebuild   string            `toml:"rebuild"`   // shell command run after writing; empty to only write
 	Sets      map[string]string `toml:"sets"`      // channel name -> Nix expression for its package set
+	// Flake is the configuration's flake output, "dir#name", used to ask
+	// Nix whether the module is imported. Empty for non-flake setups.
+	Flake string `toml:"flake"`
 	// NixpkgsConfig controls whether options such as allow unfree are
 	// written as nixpkgs.config.*; turn it off when the configuration gets
 	// its pkgs from elsewhere (nixpkgs.pkgs, readOnlyPkgs, useGlobalPkgs).
@@ -100,6 +103,9 @@ func (t *Target) normalize() error {
 	}
 	if t.File == "" {
 		return errors.New("file is required")
+	}
+	if t.Flake != "" && !strings.Contains(t.Flake, "#") {
+		return fmt.Errorf("flake %q must name the configuration, e.g. %q", t.Flake, t.Flake+"#"+t.Name)
 	}
 	t.File = ExpandHome(t.File)
 	if !filepath.IsAbs(t.File) {

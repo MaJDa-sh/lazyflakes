@@ -23,10 +23,15 @@ func runSetup(args []string) error {
 	configPath := fs.String("config", defaultConfigPath(), "config file to write")
 	yes := fs.Bool("yes", false, "answer yes to every question")
 	printOnly := fs.Bool("print", false, "only print the detected config")
+	flakeDir := fs.String("flake", "", "directory of your configuration flake (default: search "+strings.Join(config.FlakeDirs, ", ")+")")
+	host := fs.String("host", "", "flake configuration to manage (default: the one named after this machine)")
 	fs.Parse(args)
 
-	sys := config.Inspect()
-	d := config.Detect(sys, generate.DefaultChannels(time.Now()))
+	if *flakeDir == "" {
+		fmt.Println("Looking for your configuration (flakes are evaluated, which can take a moment)…")
+	}
+	sys := config.Inspect(*flakeDir)
+	d := config.Detect(sys, generate.DefaultChannels(time.Now()), *host)
 	toml := d.TOML()
 	if *printOnly {
 		fmt.Print(toml)
