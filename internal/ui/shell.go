@@ -75,7 +75,7 @@ func (m *Model) enterShell() tea.Cmd {
 		labels[i] = m.label(s)
 		pkgs[i] = generate.Package{Attr: m.pkgs[s.pkg].Attr, Channel: s.channel}
 	}
-	expr := generate.ShellExpr(m.channels, pkgs)
+	expr := generate.ShellExpr(m.channels, pkgs, 0)
 	return tea.Exec(newShellCmd(labels, expr), func(err error) tea.Msg {
 		return shellExitedMsg{labels: labels, err: err}
 	})

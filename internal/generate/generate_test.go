@@ -53,7 +53,7 @@ func TestStableBranch(t *testing.T) {
 
 func TestRenderSingleChannel(t *testing.T) {
 	pkgs := []Package{{Attr: "hello", Channel: 0}}
-	shell := Render(ShellNix, testChannels, pkgs)
+	shell := Render(ShellNix, testChannels, pkgs, 0)
 	want := `{ pkgs ? import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/nixpkgs-unstable.tar.gz") { } }:
 
 pkgs.mkShell {
@@ -66,7 +66,7 @@ pkgs.mkShell {
 		t.Errorf("shell.nix:\n%s\nwant:\n%s", shell, want)
 	}
 
-	flake := Render(Flake, testChannels, []Package{{Attr: "hello", Channel: 1}})
+	flake := Render(Flake, testChannels, []Package{{Attr: "hello", Channel: 1}}, 0)
 	for _, s := range []string{
 		`nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";`,
 		"outputs = { nixpkgs-stable, ... }:",
@@ -84,7 +84,7 @@ pkgs.mkShell {
 
 func TestRenderMixedChannels(t *testing.T) {
 	pkgs := []Package{{Attr: "jq", Channel: 1}, {Attr: "ripgrep", Channel: 0}}
-	shell := Render(ShellNix, testChannels, pkgs)
+	shell := Render(ShellNix, testChannels, pkgs, 0)
 	for _, s := range []string{
 		"{ pkgs ? import (fetchTarball \"https://github.com/NixOS/nixpkgs/archive/nixpkgs-unstable.tar.gz\") { }\n" +
 			", pkgsStable ? import (fetchTarball \"https://github.com/NixOS/nixpkgs/archive/nixos-26.05.tar.gz\") { }\n}:",
@@ -95,7 +95,7 @@ func TestRenderMixedChannels(t *testing.T) {
 			t.Errorf("shell.nix missing %q:\n%s", s, shell)
 		}
 	}
-	flake := Render(Flake, testChannels, pkgs)
+	flake := Render(Flake, testChannels, pkgs, 0)
 	for _, s := range []string{
 		"outputs = { nixpkgs, nixpkgs-stable, ... }:",
 		"forAllSystems = f: nixpkgs.lib.genAttrs",
@@ -111,10 +111,10 @@ func TestRenderMixedChannels(t *testing.T) {
 func TestRenderNonGithubRef(t *testing.T) {
 	chans := []Channel{{Name: "local", Input: "nixpkgs", Var: "pkgs", Ref: "nixpkgs"}}
 	pkgs := []Package{{Attr: "hello"}}
-	if s := Render(ShellNix, chans, pkgs); !strings.Contains(s, "{ pkgs ? import <nixpkgs> { } }:") {
+	if s := Render(ShellNix, chans, pkgs, 0); !strings.Contains(s, "{ pkgs ? import <nixpkgs> { } }:") {
 		t.Errorf("shell.nix should fall back to <nixpkgs>:\n%s", s)
 	}
-	if s := Render(Flake, chans, pkgs); !strings.Contains(s, `nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";`) {
+	if s := Render(Flake, chans, pkgs, 0); !strings.Contains(s, `nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";`) {
 		t.Errorf("flake.nix should resolve the registry name:\n%s", s)
 	}
 }
@@ -123,13 +123,13 @@ func TestWriteRefusesOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	hello := []Package{{Attr: "hello"}}
 	jq := []Package{{Attr: "jq"}}
-	if _, err := Write(dir, Flake, testChannels, hello, false); err != nil {
+	if _, err := Write(dir, Flake, testChannels, hello, 0, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Write(dir, Flake, testChannels, jq, false); !errors.Is(err, ErrExists) {
+	if _, err := Write(dir, Flake, testChannels, jq, 0, false); !errors.Is(err, ErrExists) {
 		t.Fatalf("want ErrExists, got %v", err)
 	}
-	if _, err := Write(dir, Flake, testChannels, jq, true); err != nil {
+	if _, err := Write(dir, Flake, testChannels, jq, 0, true); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "flake.nix"))
@@ -165,14 +165,59 @@ func TestWriteEnvrc(t *testing.T) {
 }
 
 func TestShellExpr(t *testing.T) {
-	got := ShellExpr(testChannels, []Package{{Attr: "jq", Channel: 1}, {Attr: "gtk+3", Channel: 1}})
+	got := ShellExpr(testChannels, []Package{{Attr: "jq", Channel: 1}, {Attr: "gtk+3", Channel: 1}}, 0)
 	want := `let pkgsStable = (builtins.getFlake "github:NixOS/nixpkgs/nixos-26.05").legacyPackages.${builtins.currentSystem}; ` +
 		`in pkgsStable.mkShell { name = "lazyflakes"; packages = [ pkgsStable.jq pkgsStable."gtk+3" ]; }`
 	if got != want {
 		t.Errorf("ShellExpr:\n got %s\nwant %s", got, want)
 	}
-	mixed := ShellExpr(testChannels, []Package{{Attr: "jq", Channel: 1}, {Attr: "ripgrep", Channel: 0}})
+	mixed := ShellExpr(testChannels, []Package{{Attr: "jq", Channel: 1}, {Attr: "ripgrep", Channel: 0}}, 0)
 	if !strings.Contains(mixed, "in pkgs.mkShell") || !strings.Contains(mixed, "[ pkgsStable.jq pkgs.ripgrep ]") {
 		t.Errorf("mixed ShellExpr: %s", mixed)
+	}
+}
+
+func TestOptions(t *testing.T) {
+	opts, err := ParseOptions("unfree, insecure")
+	if err != nil || !opts.Has(Unfree) || !opts.Has(Insecure) || opts.Has(Broken) {
+		t.Fatalf("ParseOptions: %v %v", opts, err)
+	}
+	if _, err := ParseOptions("unfree,nope"); err == nil {
+		t.Error("unknown option should fail")
+	}
+	if got := opts.Env(); strings.Join(got, " ") != "NIXPKGS_ALLOW_UNFREE=1 NIXPKGS_ALLOW_INSECURE=1" {
+		t.Errorf("Env = %v", got)
+	}
+	if opts.Toggle(Unfree).Has(Unfree) {
+		t.Error("Toggle should clear a set option")
+	}
+
+	pkgs := []Package{{Attr: "unrar", Channel: 0}, {Attr: "jq", Channel: 1}}
+	shell := Render(ShellNix, testChannels, pkgs, opts)
+	cfg := "{ config = { allowUnfree = true; allowInsecurePredicate = _: true; }; }"
+	if strings.Count(shell, cfg) != 2 {
+		t.Errorf("shell.nix should pass config to both channels:\n%s", shell)
+	}
+
+	flake := Render(Flake, testChannels, pkgs, opts)
+	for _, s := range []string{
+		"      config = { allowUnfree = true; allowInsecurePredicate = _: true; };\n",
+		"pkgs = import nixpkgs { inherit system config; };",
+		"pkgsStable = import nixpkgs-stable { inherit system config; };",
+	} {
+		if !strings.Contains(flake, s) {
+			t.Errorf("flake.nix missing %q:\n%s", s, flake)
+		}
+	}
+	if strings.Contains(flake, "legacyPackages") {
+		t.Errorf("flake.nix with config must not use legacyPackages:\n%s", flake)
+	}
+
+	expr := ShellExpr(testChannels, pkgs[:1], opts)
+	want := `let config = { allowUnfree = true; allowInsecurePredicate = _: true; }; ` +
+		`pkgs = import (builtins.getFlake "github:NixOS/nixpkgs/nixpkgs-unstable").outPath { system = builtins.currentSystem; inherit config; }; ` +
+		`in pkgs.mkShell { name = "lazyflakes"; packages = [ pkgs.unrar ]; }`
+	if expr != want {
+		t.Errorf("ShellExpr:\n got %s\nwant %s", expr, want)
 	}
 }

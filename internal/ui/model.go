@@ -382,7 +382,7 @@ func (m *Model) openGenerate() {
 // write generates the chosen file in m.dir, asking before replacing one.
 func (m *Model) write(overwrite bool) {
 	f := generate.Formats[m.genCursor]
-	path, err := generate.Write(m.dir, f, m.channels, m.selectedPackages(), overwrite)
+	path, err := generate.Write(m.dir, f, m.channels, m.selectedPackages(), 0, overwrite)
 	switch {
 	case errors.Is(err, generate.ErrExists):
 		m.popup = popupConfirm

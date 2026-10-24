@@ -48,19 +48,20 @@ func (f Format) Hint() string {
 	return "run `nix-shell`"
 }
 
-// Render returns the file contents for pkgs, each taken from its channel.
-func Render(f Format, channels []Channel, pkgs []Package) string {
+// Render returns the file contents for pkgs, each taken from its channel,
+// with opts applied to the nixpkgs config of every channel.
+func Render(f Format, channels []Channel, pkgs []Package, opts Options) string {
 	if f == Flake {
-		return renderFlake(channels, pkgs)
+		return renderFlake(channels, pkgs, opts)
 	}
-	return renderShell(channels, pkgs)
+	return renderShell(channels, pkgs, opts)
 }
 
 // ErrExists is returned by Write when the file exists and overwrite is false.
 var ErrExists = errors.New("file already exists")
 
 // Write renders the format into dir and returns the written path.
-func Write(dir string, f Format, channels []Channel, pkgs []Package, overwrite bool) (string, error) {
+func Write(dir string, f Format, channels []Channel, pkgs []Package, opts Options, overwrite bool) (string, error) {
 	path := filepath.Join(dir, f.Filename())
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if !overwrite {
@@ -73,22 +74,26 @@ func Write(dir string, f Format, channels []Channel, pkgs []Package, overwrite b
 	if err != nil {
 		return path, err
 	}
-	if _, err := file.WriteString(Render(f, channels, pkgs)); err != nil {
+	if _, err := file.WriteString(Render(f, channels, pkgs, opts)); err != nil {
 		file.Close()
 		return path, err
 	}
 	return path, file.Close()
 }
 
-func renderShell(channels []Channel, pkgs []Package) string {
+func renderShell(channels []Channel, pkgs []Package, opts Options) string {
 	used := usedChannels(channels, pkgs)
+	importArgs := "{ }"
+	if cfg := opts.configExpr(); cfg != "" {
+		importArgs = "{ config = " + cfg + "; }"
+	}
 	args := make([]string, len(used))
 	for i, c := range used {
-		src := "import <nixpkgs> { }"
+		src := "<nixpkgs>"
 		if url, ok := tarballURL(c.Ref); ok {
-			src = fmt.Sprintf("import (fetchTarball %q) { }", url)
+			src = fmt.Sprintf("(fetchTarball %q)", url)
 		}
-		args[i] = fmt.Sprintf("%s ? %s", c.Var, src)
+		args[i] = fmt.Sprintf("%s ? import %s %s", c.Var, src, importArgs)
 	}
 	head := "{ " + args[0] + " }:"
 	if len(args) > 1 {
@@ -102,13 +107,21 @@ func renderShell(channels []Channel, pkgs []Package) string {
 `, head, used[0].Var, packagesExpr(channels, pkgs, "  "))
 }
 
-func renderFlake(channels []Channel, pkgs []Package) string {
+func renderFlake(channels []Channel, pkgs []Package, opts Options) string {
 	used := usedChannels(channels, pkgs)
+	cfg := opts.configExpr()
+	// legacyPackages ignores config, so with options nixpkgs is imported.
+	let := ""
+	set := "        %s = %s.legacyPackages.${system};"
+	if cfg != "" {
+		let = "\n      config = " + cfg + ";"
+		set = "        %s = import %s { inherit system config; };"
+	}
 	var inputs, args, sets, vars []string
 	for _, c := range used {
 		inputs = append(inputs, fmt.Sprintf("    %s.url = %q;", c.Input, flakeInputURL(c.Ref)))
 		args = append(args, c.Input)
-		sets = append(sets, fmt.Sprintf("        %s = %s.legacyPackages.${system};", c.Var, c.Input))
+		sets = append(sets, fmt.Sprintf(set, c.Var, c.Input))
 		vars = append(vars, c.Var)
 	}
 	return fmt.Sprintf(`{
@@ -120,7 +133,7 @@ func renderFlake(channels []Channel, pkgs []Package) string {
 
   outputs = { %s, ... }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];%s
       forAllSystems = f: %s.lib.genAttrs systems (system: f {
 %s
       });
@@ -133,7 +146,7 @@ func renderFlake(channels []Channel, pkgs []Package) string {
       });
     };
 }
-`, strings.Join(inputs, "\n"), strings.Join(args, ", "), used[0].Input,
+`, strings.Join(inputs, "\n"), strings.Join(args, ", "), let, used[0].Input,
 		strings.Join(sets, "\n"), strings.Join(vars, ", "), used[0].Var,
 		packagesExpr(channels, pkgs, "          "))
 }
@@ -279,12 +292,20 @@ func WriteEnvrc(dir string, f Format) (path string, changed bool, err error) {
 }
 
 // ShellExpr is a one-line mkShell expression for `nix develop --impure --expr`
-// that takes every package from its channel's flake.
-func ShellExpr(channels []Channel, pkgs []Package) string {
+// that takes every package from its channel's flake, with opts applied.
+func ShellExpr(channels []Channel, pkgs []Package, opts Options) string {
 	used := usedChannels(channels, pkgs)
 	var lets []string
+	cfg := opts.configExpr()
+	if cfg != "" {
+		lets = append(lets, "config = "+cfg+";")
+	}
 	for _, c := range used {
-		lets = append(lets, fmt.Sprintf("%s = (builtins.getFlake %q).legacyPackages.${builtins.currentSystem};", c.Var, c.Ref))
+		if cfg != "" {
+			lets = append(lets, fmt.Sprintf("%s = import (builtins.getFlake %q).outPath { system = builtins.currentSystem; inherit config; };", c.Var, c.Ref))
+		} else {
+			lets = append(lets, fmt.Sprintf("%s = (builtins.getFlake %q).legacyPackages.${builtins.currentSystem};", c.Var, c.Ref))
+		}
 	}
 	attrs := make([]string, len(pkgs))
 	for i, p := range pkgs {

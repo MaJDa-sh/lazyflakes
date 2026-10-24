@@ -121,7 +121,7 @@ func (m Model) generateView() string {
 	if _, err := os.Stat(filepath.Join(m.dir, f.Filename())); err == nil {
 		lines[len(lines)-1] += errStyle.Render(" (" + f.Filename() + " exists, will ask before overwriting)")
 	}
-	for _, l := range strings.Split(generate.Render(f, m.channels, m.selectedPackages()), "\n") {
+	for _, l := range strings.Split(generate.Render(f, m.channels, m.selectedPackages(), 0), "\n") {
 		lines = append(lines, " "+l)
 	}
 	return panel("Generate in "+displayPath(m.dir), "enter write · s/f shortcut · e .envrc · esc cancel", lines, w, h, true)
