@@ -168,3 +168,8 @@ LAZYFLAKES_E2E=1 LAZYFLAKES_VM=1 go test -run VirtualMachine .  # boot a NixOS V
 The end-to-end tests drive the `lazyflakes` binary against temporary
 configurations and build them with `nixos-rebuild build` / `nix build`; they
 use the nixpkgs from `NIX_PATH` and never touch the running system.
+
+## License
+
+[MIT](LICENSE). lazyflakes is a community project and is not affiliated with
+or endorsed by the NixOS Foundation.
