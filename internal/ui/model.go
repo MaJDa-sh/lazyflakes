@@ -87,8 +87,9 @@ type Model struct {
 	optCursor int              // index into generate.AllOptions
 	optReturn popup            // popup to go back to when options close
 
-	configPath string   // config.toml with the system targets
-	sys        sysState // the system popup
+	configPath string                    // config.toml with the system targets
+	sys        sysState                  // the system popup
+	installed  map[string][]installation // attr -> where lazyflakes installed it
 
 	input   textinput.Model
 	spinner spinner.Model
@@ -186,6 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case appliedMsg:
+		m.loadInstalled()
 		if msg.err != nil {
 			m.status = fmt.Sprintf("error: updating %s failed, nothing was changed (%v)", msg.target, msg.err)
 		} else if msg.rebuilt {
@@ -196,6 +198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case setupDoneMsg:
+		m.loadInstalled()
 		return m, m.openSystem()
 
 	case importCheckedMsg:
@@ -246,6 +249,7 @@ func (m *Model) loadedChannel(msg loadedMsg) {
 	}
 	m.index = search.NewIndex(m.pkgs)
 	m.selected = nil
+	m.loadInstalled()
 	m.refilter()
 	m.status = fmt.Sprintf("%d packages · %s", len(m.pkgs), strings.Join(infos, ", "))
 }

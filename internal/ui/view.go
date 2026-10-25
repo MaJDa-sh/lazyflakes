@@ -232,10 +232,7 @@ func (m Model) packagesView(w, h int) string {
 	for i := m.offset; i < len(m.filtered) && len(lines) < h-2; i++ {
 		p := m.filtered[i]
 		attr := padTo(ansi.Truncate(m.pkgs[p].Attr, attrW, "…"), attrW)
-		mark := "  "
-		if s := m.selectionOf(p); s >= 0 {
-			mark = channelStyle(m.selected[s].channel).Bold(true).Render("● ")
-		}
+		mark := m.listMark(p)
 
 		if i == m.cursor {
 			text := attr
@@ -308,6 +305,10 @@ func (m Model) detailsView(w, h int) string {
 			v = dimStyle.Render("not available")
 		}
 		lines = append(lines, channelStyle(c).Bold(true).Render(fmt.Sprintf("%-9s", ch.Name))+v)
+	}
+	for _, in := range m.installed[pkg.Attr] {
+		lines = append(lines, labelStyle.Render("installed")+" "+in.target+" · "+in.channel+
+			dimStyle.Render("  (a to remove or change)"))
 	}
 	lines = append(lines, "", labelStyle.Render("description"))
 	desc := pkg.Description
