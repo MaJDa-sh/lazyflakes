@@ -13,12 +13,42 @@ unstable channels side by side, then
 
 ## Install
 
+lazyflakes needs [Nix](https://nixos.org/download) (it asks Nix for the
+packages). Pick one:
+
+**Try it without installing**
+
 ```sh
-./install.sh                     # builds and installs to ~/.local/bin
-PREFIX=/usr/local ./install.sh   # or somewhere else
+nix run github:MaJDa-sh/lazyflakes
 ```
 
-or `go install github.com/MaJDa-sh/lazyflakes@latest`.
+**Install for your user**
+
+```sh
+nix profile install github:MaJDa-sh/lazyflakes
+```
+
+**In a NixOS, nix-darwin or home-manager flake**
+
+```nix
+inputs.lazyflakes.url = "github:MaJDa-sh/lazyflakes";
+inputs.lazyflakes.inputs.nixpkgs.follows = "nixpkgs";
+
+# then, in a module:
+environment.systemPackages = [ inputs.lazyflakes.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+# (or home.packages; overlays.default adds pkgs.lazyflakes instead)
+```
+
+**Prebuilt binary** (Linux and macOS, x86_64 and arm64): download the archive
+for your system from the [releases page](https://github.com/MaJDa-sh/lazyflakes/releases),
+unpack it and put `lazyflakes` somewhere on your `PATH`.
+
+**With Go**: `go install github.com/MaJDa-sh/lazyflakes@latest`, or from a
+checkout `./install.sh` (installs to `~/.local/bin`, `PREFIX=…` to change).
+
+> The first start evaluates all of nixpkgs for both channels, which can take
+> **1–3 minutes**. The result is cached for a day, so later starts take under
+> a second.
 
 ## Keys
 
@@ -168,6 +198,19 @@ LAZYFLAKES_E2E=1 LAZYFLAKES_VM=1 go test -run VirtualMachine .  # boot a NixOS V
 The end-to-end tests drive the `lazyflakes` binary against temporary
 configurations and build them with `nixos-rebuild build` / `nix build`; they
 use the nixpkgs from `NIX_PATH` and never touch the running system.
+
+### Releasing
+
+Releases are built by GoReleaser in GitHub Actions. To publish one:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow runs the tests, builds the binaries and creates the GitHub
+release with notes grouped from the conventional commits. Try it locally
+first with `nix develop -c goreleaser release --snapshot --clean`.
 
 ## License
 
