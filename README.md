@@ -11,6 +11,10 @@ unstable channels side by side, then
 - write a `shell.nix` or `flake.nix` (and `.envrc`) for the current project (`w`),
 - or install them into your NixOS, nix-darwin or home-manager configuration (`a`).
 
+<p align="center">
+  <img src="assets/demo.gif" alt="lazyflakes: searching packages, selecting from both channels, previewing a flake.nix and removing an installed package" width="900">
+</p>
+
 ## Install
 
 lazyflakes needs [Nix](https://nixos.org/download) (it asks Nix for the
@@ -198,6 +202,10 @@ LAZYFLAKES_E2E=1 LAZYFLAKES_VM=1 go test -run VirtualMachine .  # boot a NixOS V
 The end-to-end tests drive the `lazyflakes` binary against temporary
 configurations and build them with `nixos-rebuild build` / `nix build`; they
 use the nixpkgs from `NIX_PATH` and never touch the running system.
+
+The demo GIF is recorded with [VHS](https://github.com/charmbracelet/vhs) in a
+throwaway home, so it never touches your system:
+`nix-shell -p vhs --run "vhs assets/demo.tape"`.
 
 ### Releasing
 
