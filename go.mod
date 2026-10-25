@@ -1,6 +1,6 @@
 module github.com/MaJDa-sh/lazyflakes
 
-go 1.26.2
+go 1.24.0
 
 require (
 	github.com/BurntSushi/toml v1.4.0
