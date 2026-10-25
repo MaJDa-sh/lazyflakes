@@ -1,4 +1,8 @@
-# lazyflakes
+<p align="center">
+  <img src="assets/logo.svg" alt="lazyflakes logo" width="300">
+</p>
+
+<h1 align="center">lazyflakes</h1>
 
 A lazygit-style terminal UI for nixpkgs: search packages from the stable and
 unstable channels side by side, then
