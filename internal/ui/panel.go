@@ -8,14 +8,17 @@ import (
 )
 
 var (
-	activeBorder      = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	inactiveBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	dimStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	attrStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	markStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	cursorStyle       = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Bold(true)
-	cursorRemoveStyle = lipgloss.NewStyle().Background(lipgloss.Color("1")).Foreground(lipgloss.Color("15")).Bold(true)
-	cursorDimStyle    = lipgloss.NewStyle().Background(lipgloss.Color("8")).Foreground(lipgloss.Color("15"))
+	activeBorder   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	inactiveBorder = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	attrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	markStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	// Highlighted rows use fixed colors instead of the terminal palette:
+	// many themes make palette blue light enough that white text on it is
+	// unreadable. These keep at least 5:1 contrast everywhere.
+	cursorStyle       = lipgloss.NewStyle().Background(lipgloss.Color("#3B5BDB")).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+	cursorRemoveStyle = lipgloss.NewStyle().Background(lipgloss.Color("#C92A2A")).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+	cursorDimStyle    = lipgloss.NewStyle().Background(lipgloss.Color("#495057")).Foreground(lipgloss.Color("#F1F3F5"))
 	labelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	keyStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	errStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
