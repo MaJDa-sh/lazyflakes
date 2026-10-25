@@ -8,16 +8,17 @@ import (
 )
 
 var (
-	activeBorder   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	inactiveBorder = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	attrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	markStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	cursorStyle    = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Bold(true)
-	cursorDimStyle = lipgloss.NewStyle().Background(lipgloss.Color("8")).Foreground(lipgloss.Color("15"))
-	labelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	keyStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	activeBorder      = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	inactiveBorder    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dimStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	attrStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	markStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	cursorStyle       = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Bold(true)
+	cursorRemoveStyle = lipgloss.NewStyle().Background(lipgloss.Color("1")).Foreground(lipgloss.Color("15")).Bold(true)
+	cursorDimStyle    = lipgloss.NewStyle().Background(lipgloss.Color("8")).Foreground(lipgloss.Color("15"))
+	labelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	keyStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	errStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 )
 
 // panel draws a lazygit-style rounded box of exactly w×h cells with the title

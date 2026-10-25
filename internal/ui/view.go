@@ -51,15 +51,17 @@ func (m Model) View() string {
 	leftW := max(30, m.width*11/20)
 	rightW := m.width - leftW
 	bodyH := m.height - 1
-	selH := max(5, bodyH/3)
+	selH := max(5, bodyH/4)
+	instH := max(5, bodyH/4)
 
 	left := lipgloss.JoinVertical(lipgloss.Left,
 		m.searchView(leftW),
 		m.packagesView(leftW, bodyH-searchHeight),
 	)
 	right := lipgloss.JoinVertical(lipgloss.Left,
-		m.detailsView(rightW, bodyH-selH),
+		m.detailsView(rightW, bodyH-selH-instH),
 		m.selectedView(rightW, selH),
+		m.installedView(rightW, instH),
 	)
 	screen := lipgloss.JoinHorizontal(lipgloss.Top, left, right) + "\n" + m.footerView()
 
@@ -240,7 +242,7 @@ func (m Model) packagesView(w, h int) string {
 				text += " " + padLeft(versionCell(m.versions[p][c]), versionWidth)
 			}
 			style := cursorDimStyle
-			if m.focus != focusSelected {
+			if m.focus == focusPackages || m.focus == focusSearch {
 				style = cursorStyle
 			}
 			lines = append(lines, mark+style.Render(padTo(text, inner-2)))
@@ -262,15 +264,15 @@ func (m Model) packagesView(w, h int) string {
 		lines = append(lines, dimStyle.Render("  no packages match"))
 	}
 
-	title := fmt.Sprintf("Packages %d", len(m.pkgs))
+	title := fmt.Sprintf("[1] Packages %d", len(m.pkgs))
 	if m.input.Value() != "" {
-		title = fmt.Sprintf("Packages %d of %d", len(m.filtered), len(m.pkgs))
+		title = fmt.Sprintf("[1] Packages %d of %d", len(m.filtered), len(m.pkgs))
 	}
 	footer := ""
 	if len(m.filtered) > 0 {
 		footer = fmt.Sprintf("%d of %d", m.cursor+1, len(m.filtered))
 	}
-	return panel(title, footer, lines, w, h, m.focus != focusSelected)
+	return panel(title, footer, lines, w, h, m.focus == focusPackages || m.focus == focusSearch)
 }
 
 // versionCell is a version truncated to its column, or "—" when missing.
@@ -308,7 +310,7 @@ func (m Model) detailsView(w, h int) string {
 	}
 	for _, in := range m.installed[pkg.Attr] {
 		lines = append(lines, labelStyle.Render("installed")+" "+in.target+" · "+in.channel+
-			dimStyle.Render("  (a to remove or change)"))
+			dimStyle.Render("  (press 3 to remove or change it)"))
 	}
 	lines = append(lines, "", labelStyle.Render("description"))
 	desc := pkg.Description
@@ -360,7 +362,7 @@ func (m Model) selectedView(w, h int) string {
 	if keys := m.opts.Keys(); len(keys) > 0 {
 		footer = "allow " + strings.Join(keys, ", ")
 	}
-	return panel(fmt.Sprintf("Selected %d", len(m.selected)), footer, lines, w, h, m.focus == focusSelected)
+	return panel(fmt.Sprintf("[2] Selected %d", len(m.selected)), footer, lines, w, h, m.focus == focusSelected)
 }
 
 func (m Model) footerView() string {
@@ -368,10 +370,12 @@ func (m Model) footerView() string {
 	switch m.focus {
 	case focusSearch:
 		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
+	case focusInstalled:
+		keys = [][2]string{{"j/k", "move"}, {"d", "remove"}, {"c", "channel"}, {"u", "undo"}, {"enter", "review & apply"}, {"1-3", "panels"}, {"q", "quit"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "remove"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"tab", "packages"}, {"q", "quit"}}
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "unselect"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"1-3", "panels"}, {"q", "quit"}}
 	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"tab", "selected"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"1-3", "panels"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
 	}
 	switch m.popup {
 	case popupGenerate:

@@ -27,6 +27,7 @@ const (
 	focusPackages focus = iota
 	focusSearch
 	focusSelected
+	focusInstalled
 )
 
 // popup is a modal drawn over the panels; while open it takes all keys.
@@ -88,7 +89,8 @@ type Model struct {
 	optReturn popup            // popup to go back to when options close
 
 	configPath string                    // config.toml with the system targets
-	sys        sysState                  // the system popup
+	sys        sysState                  // pending changes, shared by the Installed panel and install popup
+	instCursor int                       // position in the Installed panel
 	installed  map[string][]installation // attr -> where lazyflakes installed it
 
 	input   textinput.Model
@@ -188,6 +190,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case appliedMsg:
 		m.loadInstalled()
+		m.syncSystem(m.sys.target, msg.err != nil, false)
+		m.instCursor = 0
 		if msg.err != nil {
 			m.status = fmt.Sprintf("error: updating %s failed, nothing was changed (%v)", msg.target, msg.err)
 		} else if msg.rebuilt {
@@ -250,6 +254,7 @@ func (m *Model) loadedChannel(msg loadedMsg) {
 	m.index = search.NewIndex(m.pkgs)
 	m.selected = nil
 	m.loadInstalled()
+	m.syncSystem(m.sys.target, false, false)
 	m.refilter()
 	m.status = fmt.Sprintf("%d packages · %s", len(m.pkgs), strings.Join(infos, ", "))
 }
@@ -278,6 +283,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.popup != popupNone {
 		return m.handlePopupKey(key)
+	}
+	// Number keys jump to a panel, like in lazygit.
+	if m.focus != focusSearch {
+		switch key {
+		case "1":
+			m.focus = focusPackages
+			return m, nil
+		case "2":
+			m.focus = focusSelected
+			return m, nil
+		case "3":
+			m.focus = focusInstalled
+			return m, nil
+		}
+	}
+	if m.focus == focusInstalled {
+		return m.handleInstalledKey(key)
 	}
 
 	switch m.focus {
@@ -308,7 +330,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "q":
 			return m, tea.Quit
-		case "tab", "shift+tab", "h", "left":
+		case "tab":
+			m.focus = focusInstalled
+		case "shift+tab", "h", "left":
 			m.focus = focusPackages
 		case "j", "down":
 			m.selCursor = min(m.selCursor+1, max(0, len(m.selected)-1))
@@ -348,8 +372,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			m.refilter()
 		}
-	case "tab", "shift+tab", "l", "right":
+	case "tab", "l", "right":
 		m.focus = focusSelected
+	case "shift+tab":
+		m.focus = focusInstalled
 	case "j", "down":
 		m.move(1)
 	case "k", "up":

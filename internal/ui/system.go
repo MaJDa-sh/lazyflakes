@@ -19,14 +19,16 @@ import (
 )
 
 // sysItem is one row of the system popup: a package already in the managed
-// module, or one about to be added.
+// module, or one about to be added. The Installed panel shows the former.
 type sysItem struct {
 	entry   managed.Entry
 	orig    string // channel in the module; "" for a package being added
 	removed bool
 }
 
-// sysState is the system popup: the changes to one target's managed module.
+// sysState holds the pending changes to one target's managed module. The
+// Installed panel and the install popup share it, so a removal marked in
+// the panel is reviewed and applied in the popup.
 type sysState struct {
 	targets  []*config.Target
 	target   int
@@ -55,30 +57,38 @@ type appliedMsg struct {
 
 type setupDoneMsg struct{ err error }
 
-// openSystem (re)reads the config and shows the system popup.
+// openSystem shows the install popup with the pending changes plus the
+// current selection.
 func (m *Model) openSystem() tea.Cmd {
-	m.sys = sysState{}
 	m.popup = popupSystem
-	cfg, err := config.Load(m.configPath)
-	if err != nil {
-		m.sys.err = err
-		return nil
-	}
-	m.sys.targets = cfg.Ordered()
-	if len(m.sys.targets) == 0 {
-		m.sys.err = config.ErrNoConfig
-		return nil
-	}
-	return m.loadTarget(0)
+	m.sys.cursor = 0
+	return m.syncSystem(m.sys.target, true, true)
 }
 
-// loadTarget reads target i's module and adds the current selection to it.
-// The returned command asks Nix whether the module is imported; until it
-// answers, the quick text search is shown.
-func (m *Model) loadTarget(i int) tea.Cmd {
+// syncSystem (re)reads the config and target ti's module into m.sys and
+// adds the current selection as packages to install. With keepPending, the
+// removals and channel changes already marked for that target survive.
+// With check, the returned command asks Nix whether the module is
+// imported; until it answers, the quick text search is shown.
+func (m *Model) syncSystem(ti int, keepPending, check bool) tea.Cmd {
+	prev := m.sys
+	m.sys = sysState{cursor: prev.cursor}
 	s := &m.sys
-	s.target, s.cursor, s.items, s.err = i, 0, nil, nil
-	t := s.targets[i]
+	cfg, err := config.Load(m.configPath)
+	if err != nil {
+		s.err = err
+		return nil
+	}
+	s.targets = cfg.Ordered()
+	if len(s.targets) == 0 {
+		s.err = config.ErrNoConfig
+		return nil
+	}
+	if ti < 0 || ti >= len(s.targets) {
+		ti = 0
+	}
+	s.target = ti
+	t := s.targets[ti]
 	mod, exists, err := managed.Read(t.File)
 	if err != nil {
 		s.err = err
@@ -86,10 +96,22 @@ func (m *Model) loadTarget(i int) tea.Cmd {
 	}
 	s.exists, s.opts = exists, mod.Options
 	s.imported = exists && managed.Imported(t)
-	s.checking = exists
+
+	pending := map[string]sysItem{}
+	if keepPending && prev.err == nil && prev.target < len(prev.targets) && prev.targets[prev.target].Name == t.Name {
+		for _, it := range prev.items {
+			if it.orig != "" {
+				pending[it.entry.Attr] = it
+			}
+		}
+	}
 	present := map[string]bool{}
 	for _, e := range mod.Packages {
-		s.items = append(s.items, sysItem{entry: e, orig: e.Channel})
+		it := sysItem{entry: e, orig: e.Channel}
+		if p, ok := pending[e.Attr]; ok && p.orig == e.Channel {
+			it.removed, it.entry.Channel = p.removed, p.entry.Channel
+		}
+		s.items = append(s.items, it)
 		present[e.Attr] = true
 	}
 	for _, sel := range m.selected {
@@ -99,9 +121,11 @@ func (m *Model) loadTarget(i int) tea.Cmd {
 			present[attr] = true
 		}
 	}
-	if !exists {
+	s.cursor = min(s.cursor, max(0, len(s.items)-1))
+	if !exists || !check {
 		return nil
 	}
+	s.checking = true
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -144,18 +168,26 @@ func (m Model) handleSystemKey(key string) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		s.cursor = max(s.cursor-1, 0)
 	case "tab":
-		return m, m.loadTarget((s.target + 1) % len(s.targets))
+		return m, m.syncSystem((s.target+1)%len(s.targets), false, true)
 	case "shift+tab":
-		return m, m.loadTarget((s.target + len(s.targets) - 1) % len(s.targets))
+		return m, m.syncSystem((s.target+len(s.targets)-1)%len(s.targets), false, true)
 	case " ", "d", "x":
 		if len(s.items) == 0 {
 			break
 		}
 		if it := &s.items[s.cursor]; it.orig == "" {
+			// Not installed yet: drop it from the selection altogether.
+			if p, ok := m.attrIndex[it.entry.Attr]; ok {
+				if i := m.selectionOf(p); i >= 0 {
+					m.selected = append(m.selected[:i], m.selected[i+1:]...)
+					m.selCursor = min(m.selCursor, max(0, len(m.selected)-1))
+				}
+			}
+			m.status = it.entry.Attr + " will not be installed"
 			s.items = append(s.items[:s.cursor], s.items[s.cursor+1:]...)
 			s.cursor = min(s.cursor, max(0, len(s.items)-1))
 		} else {
-			it.removed = !it.removed
+			m.toggleRemoval(it)
 		}
 	case "c":
 		if len(s.items) > 0 {
@@ -313,6 +345,8 @@ func (m Model) systemView() string {
 		text := fmt.Sprintf("%s%s %-9s %-14s %s", mark, padTo(ansi.Truncate(it.entry.Attr, attrW, "…"), attrW), channel,
 			ansi.Truncate(version, 14, "…"), note)
 		switch {
+		case i == s.cursor && it.removed:
+			lines = append(lines, cursorRemoveStyle.Render(padTo(" "+text, inner)))
 		case i == s.cursor:
 			lines = append(lines, cursorStyle.Render(padTo(" "+text, inner)))
 		case strings.HasPrefix(note, "no "):

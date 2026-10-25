@@ -45,3 +45,55 @@ func TestInstalledMarks(t *testing.T) {
 		t.Errorf("installed without config = %+v", m.installed)
 	}
 }
+
+func TestPendingChangesAreShared(t *testing.T) {
+	dir := t.TempDir()
+	module := filepath.Join(dir, "lazyflakes.nix")
+	os.WriteFile(module, []byte("{ pkgs, ... }: { environment.systemPackages = [\n"+
+		"  pkgs.cowsay # lazyflakes:pkg stable cowsay\n"+
+		"  pkgs.hello # lazyflakes:pkg stable hello\n];}\n"), 0o644)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte("[targets.system]\nkind = \"nixos\"\nfile = '"+module+"'\nsets = { stable = \"pkgs\", unstable = \"pkgs-unstable\" }\n"), 0o644)
+
+	m := New(generate.DefaultChannels(time.Now()), 0, false, dir, generate.Flake, false, 0, cfg)
+	m.pkgs = []nix.Package{{Attr: "cowsay"}, {Attr: "hello"}, {Attr: "jq"}}
+	m.versions = [][]string{{"3.8", "3.8"}, {"2.12", "2.12"}, {"1.8", "1.8"}}
+	m.attrIndex = map[string]int{"cowsay": 0, "hello": 1, "jq": 2}
+	m.syncSystem(0, false, false)
+
+	// Mark cowsay for removal in the Installed panel.
+	m.focus = focusInstalled
+	next, _ := m.handleInstalledKey("d")
+	m = next.(Model)
+	if m.sys.pending() != 1 || !strings.Contains(m.status, "cowsay will be removed") {
+		t.Fatalf("pending = %d, status = %q", m.sys.pending(), m.status)
+	}
+
+	// Opening the review popup keeps the mark and adds the selection.
+	m.selected = []selection{{pkg: 2, channel: 1}}
+	m.openSystem()
+	if added, removed, _ := m.sys.changes(); added != 1 || removed != 1 {
+		t.Fatalf("popup changes: +%d −%d, items = %+v", added, removed, m.sys.items)
+	}
+
+	// Dropping the new package in the popup also unselects it.
+	m.sys.cursor = len(m.sys.items) - 1
+	next, _ = m.handleSystemKey("d")
+	m = next.(Model)
+	if len(m.selected) != 0 || len(m.sys.items) != 2 {
+		t.Errorf("selected = %+v, items = %+v", m.selected, m.sys.items)
+	}
+
+	// u undoes the pending changes; a fresh sync after applying clears them.
+	m.popup = popupNone
+	next, _ = m.handleInstalledKey("u")
+	m = next.(Model)
+	if m.sys.pending() != 0 {
+		t.Error("u should undo pending changes")
+	}
+	m.handleInstalledKey("d")
+	m.syncSystem(0, false, false)
+	if m.sys.pending() != 0 {
+		t.Error("a sync without keepPending must start clean")
+	}
+}
