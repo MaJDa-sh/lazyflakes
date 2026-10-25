@@ -36,6 +36,7 @@ func main() {
 	allowFlag := flag.String("allow", os.Getenv("LAZYFLAKES_ALLOW"), "comma-separated nixpkgs options to enable: unfree,insecure,broken,unsupported (env LAZYFLAKES_ALLOW)")
 	configPath := flag.String("config", defaultConfigPath(), "config file with the system targets (see `lazyflakes setup`)")
 	dir := flag.String("dir", ".", "directory to write generated files into")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n"+
 			"  lazyflakes [flags]          browse nixpkgs\n"+
@@ -43,10 +44,15 @@ func main() {
 			"  lazyflakes add ATTR...      install packages into the default target and rebuild\n"+
 			"  lazyflakes remove ATTR...   remove packages installed through lazyflakes\n"+
 			"  lazyflakes list             show what lazyflakes installed\n"+
+			"  lazyflakes version          print the version\n"+
 			"\nRun a command with -h for its flags.\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *showVersion {
+		runVersion(nil)
+		return
+	}
 
 	format, err := generate.ParseFormat(*formatFlag)
 	if err != nil {
@@ -72,10 +78,11 @@ func main() {
 }
 
 var subcommands = map[string]func(args []string) error{
-	"setup":  runSetup,
-	"add":    func(args []string) error { return runChange(args, false) },
-	"remove": func(args []string) error { return runChange(args, true) },
-	"list":   runList,
+	"setup":   runSetup,
+	"add":     func(args []string) error { return runChange(args, false) },
+	"remove":  func(args []string) error { return runChange(args, true) },
+	"list":    runList,
+	"version": runVersion,
 }
 
 func envOr(key, fallback string) string {
