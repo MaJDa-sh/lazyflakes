@@ -20,11 +20,18 @@ or `go install github.com/MaJDa-sh/lazyflakes@latest`.
 
 | Where | Keys |
 |---|---|
-| Packages | `/` search · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` options · `tab` selected panel · `ctrl+r` reload · `q` quit |
-| Selected | `j/k` move · `space/d` remove · `c` switch channel · `enter` shell · `w` · `a` · `o` |
+| Everywhere | `1` Packages · `2` Selected · `3` Installed (or `tab` to cycle) · `q` quit |
+| [1] Packages | `/` search · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` options · `ctrl+r` reload |
+| [2] Selected | `j/k` move · `space/d` unselect · `c` switch channel · `enter` shell · `w` · `a` · `o` |
+| [3] Installed | `j/k` move · `d` mark for removal · `c` change channel · `u` undo · `enter` review and apply · `[`/`]` other target |
 | Write popup | `enter` write · `s`/`f` shell.nix / flake.nix · `e` toggle .envrc · `o` options |
 | Options | `space` or `1`-`4`: allow unfree, insecure, broken, unsupported |
 | Install popup | `enter` apply and rebuild · `s` save without rebuilding · `d` remove · `c` channel · `tab` next target |
+
+Packages lazyflakes installed get a hollow ○ in the package list and are
+listed in the **[3] Installed** panel. To remove one, press `3`, move to it,
+press `d` (it turns red: "remove on apply"), then `enter` to review the
+changes and `enter` again to apply and rebuild.
 
 Flags: `-channel stable|unstable`, `-stable <flake ref>`, `-unstable <flake ref>`,
 `-format flake|shell`, `-envrc=false`, `-allow unfree,insecure`, `-config <path>`.
