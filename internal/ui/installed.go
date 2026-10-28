@@ -20,7 +20,7 @@ func (m *Model) loadInstalled() {
 		return
 	}
 	for _, t := range cfg.Ordered() {
-		mod, _, err := managed.Read(t.File)
+		mod, _, err := managed.Load(t)
 		if err != nil {
 			continue
 		}

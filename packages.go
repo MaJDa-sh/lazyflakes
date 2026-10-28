@@ -65,7 +65,7 @@ func runChange(args []string, remove bool) error {
 	f := newTargetFlags(name, usage)
 	channel := f.fs.String("channel", "", "channel to install from (default: the one the target maps to pkgs)")
 	allow := f.fs.String("allow", "", "nixpkgs options to enable: unfree,insecure,broken,unsupported")
-	noRebuild := f.fs.Bool("no-rebuild", false, "only write the module")
+	noRebuild := f.fs.Bool("no-rebuild", false, "only write the module (script targets always run their script)")
 	f.fs.Parse(args)
 	attrs := f.fs.Args()
 	if len(attrs) == 0 {
@@ -80,10 +80,12 @@ func runChange(args []string, remove bool) error {
 	if err != nil {
 		return err
 	}
-	mod, _, err := managed.Read(t.File)
+	mod, _, err := managed.Load(t)
 	if err != nil {
 		return err
 	}
+	old := mod
+	old.Packages = slices.Clone(mod.Packages) // the loop below edits mod in place
 
 	ch := *channel
 	if ch == "" {
@@ -114,18 +116,18 @@ func runChange(args []string, remove bool) error {
 		return nil
 	}
 
-	content, err := managed.Render(t, mod)
-	if err != nil {
-		return err
-	}
-	plan, err := managed.NewPlan(t, content, !*noRebuild)
+	plan, err := managed.Prepare(t, old, mod, !*noRebuild)
 	if err != nil {
 		return err
 	}
 	defer plan.Cleanup()
+	if !plan.HasWork() {
+		fmt.Printf("%s: nothing to do\n", t.Name)
+		return nil
+	}
 	cmd := exec.Command("sh", "-c", plan.Script())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := plan.Done(cmd.Run()); err != nil {
 		return fmt.Errorf("%s was not changed: %w", t.Name, err)
 	}
 	fmt.Printf("%s: %d → %d packages\n", t.Name, before, len(mod.Packages))
@@ -157,7 +159,7 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
-	mod, exists, err := managed.Read(t.File)
+	mod, exists, err := managed.Load(t)
 	if err != nil {
 		return err
 	}
@@ -171,7 +173,7 @@ func runList(args []string) error {
 	if keys := mod.Options.Keys(); len(keys) > 0 {
 		fmt.Printf("options: %s\n", strings.Join(keys, ", "))
 	}
-	if !managed.IsImported(context.Background(), t) {
+	if !t.IsScript() && !managed.IsImported(context.Background(), t) {
 		fmt.Printf("warning: %s is not imported by your configuration yet\n", t.File)
 	}
 	return nil

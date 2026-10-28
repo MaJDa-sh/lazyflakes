@@ -194,6 +194,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.instCursor = 0
 		if msg.err != nil {
 			m.status = fmt.Sprintf("error: updating %s failed, nothing was changed (%v)", msg.target, msg.err)
+		} else if msg.script {
+			m.status = fmt.Sprintf("%s updated by its script: %s packages", msg.target, msg.summary)
 		} else if msg.rebuilt {
 			m.status = fmt.Sprintf("%s updated: %s packages", msg.target, msg.summary)
 		} else {

@@ -52,6 +52,7 @@ type appliedMsg struct {
 	target  string
 	summary string
 	rebuilt bool
+	script  bool // the target's own script did the installing
 	err     error
 }
 
@@ -89,13 +90,15 @@ func (m *Model) syncSystem(ti int, keepPending, check bool) tea.Cmd {
 	}
 	s.target = ti
 	t := s.targets[ti]
-	mod, exists, err := managed.Read(t.File)
+	mod, exists, err := managed.Load(t)
 	if err != nil {
 		s.err = err
 		return nil
 	}
 	s.exists, s.opts = exists, mod.Options
-	s.imported = exists && managed.Imported(t)
+	// A script decides for itself what installing means, so there is no
+	// module whose import could be checked.
+	s.imported = t.IsScript() || exists && managed.Imported(t)
 
 	pending := map[string]sysItem{}
 	if keepPending && prev.err == nil && prev.target < len(prev.targets) && prev.targets[prev.target].Name == t.Name {
@@ -122,7 +125,7 @@ func (m *Model) syncSystem(ti int, keepPending, check bool) tea.Cmd {
 		}
 	}
 	s.cursor = min(s.cursor, max(0, len(s.items)-1))
-	if !exists || !check {
+	if !exists || !check || t.IsScript() {
 		return nil
 	}
 	s.checking = true
@@ -208,7 +211,7 @@ func (m *Model) cycleSystemChannel(it *sysItem) {
 	cur := m.channelIndex(it.entry.Channel)
 	for step := 1; step <= len(m.channels); step++ {
 		c := m.channels[(cur+step)%len(m.channels)].Name
-		if _, ok := t.Sets[c]; ok {
+		if t.HasChannel(c) {
 			it.entry.Channel = c
 			return
 		}
@@ -249,7 +252,7 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 		if it.removed {
 			continue
 		}
-		if _, ok := t.Sets[it.entry.Channel]; !ok {
+		if !t.HasChannel(it.entry.Channel) {
 			m.status = fmt.Sprintf("error: %s has no %s package set; press c to switch channel or add it to the config", t.Name, it.entry.Channel)
 			return nil
 		}
@@ -261,14 +264,18 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 		return nil
 	}
 
-	content, err := managed.Render(t, mod)
+	current, _, err := managed.Load(t)
 	if err != nil {
 		m.status = "error: " + err.Error()
 		return nil
 	}
-	plan, err := managed.NewPlan(t, content, rebuild)
+	plan, err := managed.Prepare(t, current, mod, rebuild)
 	if err != nil {
 		m.status = "error: " + err.Error()
+		return nil
+	}
+	if !plan.HasWork() {
+		m.status = "nothing to do: " + t.Name + " already has these packages"
 		return nil
 	}
 	m.popup = popupNone
@@ -278,7 +285,10 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 		summary += fmt.Sprintf(" ~%d", moved)
 	}
 	what := "saving " + t.File
-	if plan.Rebuild {
+	switch {
+	case t.IsScript():
+		what = "running " + t.Script + " for " + t.Name
+	case plan.Rebuild:
 		what = "updating " + t.Name
 	}
 	cmd := &termCmd{
@@ -288,7 +298,8 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 	}
 	return tea.Exec(cmd, func(err error) tea.Msg {
 		plan.Cleanup()
-		return appliedMsg{target: t.Name, summary: summary, rebuilt: plan.Rebuild, err: err}
+		err = plan.Done(err) // a script target's state is recorded here
+		return appliedMsg{target: t.Name, summary: summary, rebuilt: plan.Rebuild, script: t.IsScript(), err: err}
 	})
 }
 
@@ -339,7 +350,7 @@ func (m Model) systemView() string {
 		}
 		channel := it.entry.Channel
 		version := m.versionOf(it.entry.Attr, channel)
-		if _, ok := t.Sets[channel]; !ok && !it.removed {
+		if !t.HasChannel(channel) && !it.removed {
 			note = "no " + channel + " set in config"
 		}
 		text := fmt.Sprintf("%s%s %-9s %-14s %s", mark, padTo(ansi.Truncate(it.entry.Attr, attrW, "…"), attrW), channel,
@@ -379,12 +390,22 @@ func (m Model) systemView() string {
 	if rebuild == "" {
 		rebuild = dimStyle.Render("none configured, s only writes the file")
 	}
-	lines = append(lines, "",
-		" "+labelStyle.Render("options  ")+optText,
-		" "+labelStyle.Render("file     ")+file,
-		" "+labelStyle.Render("rebuild  ")+rebuild,
-	)
+	if t.IsScript() {
+		lines = append(lines, "",
+			" "+labelStyle.Render("options  ")+optText+dimStyle.Render(" (passed to the script)"),
+			" "+labelStyle.Render("script   ")+t.Script,
+			" "+labelStyle.Render("records  ")+file+dimStyle.Render(" (what the script installed)"),
+		)
+	} else {
+		lines = append(lines, "",
+			" "+labelStyle.Render("options  ")+optText,
+			" "+labelStyle.Render("file     ")+file,
+			" "+labelStyle.Render("rebuild  ")+rebuild,
+		)
+	}
 	switch {
+	case t.IsScript():
+		// nothing to import
 	case s.checking && !s.imported:
 		lines = append(lines, "", dimStyle.Render(" checking whether "+filepath.Base(t.File)+" is imported…"))
 	case !s.imported:
@@ -397,7 +418,11 @@ func (m Model) systemView() string {
 		title += fmt.Sprintf(" (%d/%d, tab to switch)", s.target+1, len(s.targets))
 	}
 	h := min(m.height-2, len(lines)+2)
-	return panel(title, "enter apply + rebuild · s save only · d remove · c channel · esc", lines, w, h, true)
+	footer := "enter apply + rebuild · s save only · d remove · c channel · esc"
+	if t.IsScript() {
+		footer = "enter run script · d remove · c channel · esc"
+	}
+	return panel(title, footer, lines, w, h, true)
 }
 
 // versionOf looks up attr's version in the named channel, "" when unknown.

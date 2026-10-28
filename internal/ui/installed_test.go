@@ -97,3 +97,56 @@ func TestPendingChangesAreShared(t *testing.T) {
 		t.Error("a sync without keepPending must start clean")
 	}
 }
+
+func TestScriptTargetInThePopup(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "mine.json")
+	os.WriteFile(state, []byte(`{"packages":[{"channel":"stable","attr":"cowsay"},{"channel":"unstable","attr":"htop"}]}`), 0o644)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte("[targets.mine]\nkind = \"script\"\nscript = \"true\"\nfile = '"+state+"'\n"), 0o644)
+
+	m := New(generate.DefaultChannels(time.Now()), 0, false, dir, generate.Flake, false, 0, cfg)
+	m.pkgs = []nix.Package{{Attr: "cowsay"}, {Attr: "htop"}, {Attr: "jq"}}
+	m.versions = [][]string{{"3.8", "3.8"}, {"3.5", "3.5"}, {"1.8", "1.8"}}
+	m.attrIndex = map[string]int{"cowsay": 0, "htop": 1, "jq": 2}
+
+	// A script has no module to check, so no Nix evaluation is started.
+	if cmd := m.syncSystem(0, false, true); cmd != nil {
+		t.Error("script targets must not start an import check")
+	}
+	s := m.sys
+	if s.err != nil || !s.imported || s.checking || len(s.items) != 2 {
+		t.Fatalf("sys = %+v", s)
+	}
+	m.loadInstalled()
+	if in := m.installed["htop"]; len(in) != 1 || in[0].channel != "unstable" {
+		t.Errorf("installed marks come from the recorded state: %+v", m.installed)
+	}
+
+	// Any channel is fine for a script, so c switches without a package set.
+	m.sys.cursor = 0
+	m.cycleSystemChannel(&m.sys.items[0])
+	if got := m.sys.items[0].entry.Channel; got != "unstable" {
+		t.Errorf("cowsay switched to %q, want unstable", got)
+	}
+
+	// Nothing changed (back to the recorded state) means nothing to run.
+	m.sys.items[0].entry.Channel = "stable"
+	m.popup = popupSystem
+	if cmd := m.applySystem(true); cmd != nil {
+		t.Error("applying without changes must not run the script")
+	}
+	if !strings.Contains(m.status, "nothing to do") || m.popup != popupSystem {
+		t.Errorf("status = %q, popup = %v", m.status, m.popup)
+	}
+
+	// A selected package is a pending addition that does run the script.
+	m.selected = []selection{{pkg: 2, channel: 1}}
+	m.syncSystem(0, false, false)
+	if added, _, _ := m.sys.changes(); added != 1 {
+		t.Fatalf("expected one addition, items = %+v", m.sys.items)
+	}
+	if cmd := m.applySystem(true); cmd == nil || m.popup != popupNone {
+		t.Errorf("applying an addition should run the script: cmd=%v popup=%v", cmd != nil, m.popup)
+	}
+}
