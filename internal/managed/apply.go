@@ -18,6 +18,9 @@ type Plan struct {
 	Sudo    bool   // the module's location is not writable by the user
 	GitAdd  bool   // the module lives in a git repo and is not tracked yet
 	Rebuild bool   // run the target's rebuild command after writing
+
+	hook *hookOps // script targets: the calls to the user's script
+	save *Module  // script targets: what to record once the script succeeded
 }
 
 // NewPlan writes content to a temporary file and works out how to install it.
@@ -46,7 +49,11 @@ func NewPlan(t *config.Target, content string, rebuild bool) (Plan, error) {
 }
 
 // Cleanup removes the temporary file.
-func (p Plan) Cleanup() { os.Remove(p.NewFile) }
+func (p Plan) Cleanup() {
+	if p.NewFile != "" {
+		os.Remove(p.NewFile)
+	}
+}
 
 func writable(file string) bool {
 	if _, err := os.Stat(file); err == nil {
@@ -76,6 +83,9 @@ func git(dir string, args ...string) *exec.Cmd {
 // if the rebuild fails, puts the previous module back so the configuration
 // is left exactly as it was.
 func (p Plan) Script() string {
+	if p.hook != nil {
+		return p.hookScript()
+	}
 	sudo := ""
 	if p.Sudo {
 		sudo = p.Target.Sudo + " "
