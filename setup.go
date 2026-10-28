@@ -85,8 +85,15 @@ func runSetup(args []string) error {
 			fmt.Printf("  • %s: %s is already imported\n", t.Name, t.File)
 			continue
 		}
+		name := filepath.Base(t.File)
+		if t.Flake != "" || strings.Contains(t.Rebuild, "--flake") {
+			// A flake lists its modules; imports inside a module also work.
+			fmt.Printf("  • %s: add ./%s to the modules list of your configuration in flake.nix (or to the imports of a module), then rebuild once:\n"+
+				"      modules = [ ./configuration.nix ./%s ];\n      %s\n", t.Name, name, name, t.Rebuild)
+			continue
+		}
 		fmt.Printf("  • %s: add ./%s to the imports of %s, then rebuild once:\n      %s\n",
-			t.Name, filepath.Base(t.File), importSite(t, sys), t.Rebuild)
+			t.Name, name, importSite(t, sys), t.Rebuild)
 	}
 	fmt.Println("  • then in lazyflakes select packages with space and press a to install them")
 	if len(targets) == 0 {

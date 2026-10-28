@@ -106,24 +106,31 @@ func inspectFlake(dir string) *Flake {
 		return nil
 	}
 	f := &Flake{Dir: dir}
-	ref := "path:" + dir
+	// Nix reads git repositories itself and refuses ones owned by another
+	// user ("dubious ownership"), which is the normal state of /etc/nixos.
+	// A plain directory has no such check, so it is the second attempt.
+	var refs []string
 	if exec.Command("git", "-c", "safe.directory="+dir, "-C", dir, "rev-parse").Run() == nil {
 		f.GitRepo = true
-		ref = "git+file://" + dir
+		refs = append(refs, "git+file://"+dir)
 	}
-	if err := evalFlake(f, ref); err != nil {
-		// Fall back to recognising the outputs by name in flake.nix.
-		f.EvalErr = err.Error()
-		unknown := []FlakeHost{{}}
-		if strings.Contains(string(src), "nixosConfigurations") {
-			f.NixOS = unknown
+	refs = append(refs, "path:"+dir)
+
+	for _, ref := range refs {
+		if err = evalFlake(f, ref); err == nil {
+			break
 		}
-		if strings.Contains(string(src), "darwinConfigurations") {
-			f.Darwin = unknown
+		if f.EvalErr == "" {
+			f.EvalErr = err.Error() // the first failure is the informative one
 		}
-		if strings.Contains(string(src), "homeConfigurations") {
-			f.Home = unknown
-		}
+	}
+	if err != nil {
+		// Last resort: read the host names out of flake.nix.
+		f.NixOS = scanHosts(string(src), "nixosConfigurations")
+		f.Darwin = scanHosts(string(src), "darwinConfigurations")
+		f.Home = scanHosts(string(src), "homeConfigurations")
+	} else {
+		f.EvalErr = ""
 	}
 	if len(f.NixOS)+len(f.Darwin)+len(f.Home) == 0 {
 		return nil
@@ -146,8 +153,8 @@ in {
 func evalFlake(f *Flake, ref string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "nix", "--extra-experimental-features", "nix-command flakes",
-		"eval", "--impure", "--json", "--expr", fmt.Sprintf(flakeExpr, ref))
+	cmd := exec.CommandContext(ctx, nixBin, "--extra-experimental-features", "nix-command flakes",
+		"eval", "--impure", "--no-write-lock-file", "--json", "--expr", fmt.Sprintf(flakeExpr, ref))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -160,6 +167,84 @@ func evalFlake(f *Flake, ref string) error {
 	}
 	f.NixOS, f.Darwin, f.Home = res.NixOS, res.Darwin, res.Home
 	return nil
+}
+
+// nixBin is the nix command; tests replace it with a fake.
+var nixBin = "nix"
+
+const hostIdent = `("[^"]+"|[A-Za-z_][A-Za-z0-9_'-]*)`
+
+// hostEntry matches the start of an attribute inside a block: `name =` or
+// `name.sub = `.
+var hostEntry = regexp.MustCompile(`^` + hostIdent + `\s*(?:=|\.)`)
+
+// scanHosts reads the host names of a flake output out of flake.nix source
+// without evaluating it. It understands `output.name = …` and
+// `output = { name = …; … }`; names produced by code (genAttrs, mapAttrs, …)
+// cannot be found, which is reported as one host with an empty name.
+func scanHosts(src, output string) []FlakeHost {
+	src = stripComments(src)
+	if !strings.Contains(src, output) {
+		return nil
+	}
+	var hosts []FlakeHost
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.Trim(name, `"`)
+		if name != "" && !seen[name] && name != "inherit" {
+			seen[name] = true
+			hosts = append(hosts, FlakeHost{Name: name})
+		}
+	}
+
+	// output.name = …   and   output."user@host" = …
+	for _, m := range regexp.MustCompile(regexp.QuoteMeta(output)+`\.\s*`+hostIdent+`\s*=`).FindAllStringSubmatch(src, -1) {
+		add(m[1])
+	}
+	for _, loc := range regexp.MustCompile(regexp.QuoteMeta(output)+`\s*=\s*\{`).FindAllStringIndex(src, -1) {
+		body := braceBody(src[loc[1]:])
+		// Only names at the top level of the block are hosts.
+		depth, start := 0, 0
+		for i := 0; i <= len(body); i++ {
+			switch {
+			case i == len(body) || (depth == 0 && body[i] == ';'):
+				if m := hostEntry.FindStringSubmatch(strings.TrimSpace(body[start:i])); m != nil {
+					add(m[1])
+				}
+				start = i + 1
+			case body[i] == '{' || body[i] == '[' || body[i] == '(':
+				depth++
+			case body[i] == '}' || body[i] == ']' || body[i] == ')':
+				depth--
+			}
+		}
+	}
+	if len(hosts) == 0 {
+		return []FlakeHost{{}} // the output exists but its names are computed
+	}
+	return hosts
+}
+
+// braceBody returns the text up to the brace that closes an already opened block.
+func braceBody(s string) string {
+	depth := 1
+	for i, c := range s {
+		switch c {
+		case '{':
+			depth++
+		case '}':
+			if depth--; depth == 0 {
+				return s[:i]
+			}
+		}
+	}
+	return s
+}
+
+// stripComments removes # line comments and /* */ blocks.
+func stripComments(s string) string {
+	s = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(s, "")
+	return regexp.MustCompile(`(?m)(^|\s)#.*$`).ReplaceAllString(s, "$1")
 }
 
 func lastLine(s string) string {
@@ -252,6 +337,7 @@ func Detect(sys System, channels []generate.Channel, host string) Detected {
 			d.Notes = append(d.Notes, fmt.Sprintf("%s sets nixpkgs.pkgs itself, so options like allow unfree are not written (nixpkgs_config = false)", h.Name))
 		}
 		d.add(t)
+		d.warnUnknownHost(t, h)
 		d.Notes = append(d.Notes, fmt.Sprintf("NixOS %s with a flake in %s", release, f.Dir))
 		d.noteRelease(own, release)
 		d.noteFlake(f)
@@ -276,6 +362,7 @@ func Detect(sys System, channels []generate.Channel, host string) Detected {
 		t.Flake, t.Rebuild = flakeOutput(f.Dir, h.Name), sudo+"darwin-rebuild switch --flake "+flakeRef(f.Dir, h.Name)
 		d.addPureSets(t, "unstable", channels, "nix-darwin.lib.darwinSystem", sys.NixSystem)
 		d.add(t)
+		d.warnUnknownHost(t, h)
 		d.Notes = append(d.Notes, "nix-darwin with a flake in "+f.Dir)
 		d.noteFlake(f)
 	}
@@ -296,6 +383,7 @@ func Detect(sys System, channels []generate.Channel, host string) Detected {
 		t.Flake, t.Rebuild = flakeOutput(f.Dir, h.Name), hm+" switch --flake "+flakeRef(f.Dir, h.Name)
 		d.addPureSets(t, own, channels, "home-manager.lib.homeManagerConfiguration", sys.NixSystem)
 		d.add(t)
+		d.warnUnknownHost(t, h)
 		d.Notes = append(d.Notes, "home-manager configurations in the flake in "+f.Dir)
 		if d.Config.Targets["system"] == nil {
 			d.noteFlake(f)
@@ -366,10 +454,20 @@ func flakeOutput(dir, name string) string {
 
 func (d *Detected) noteFlake(f *Flake) {
 	if f.EvalErr != "" {
-		d.Notes = append(d.Notes, "could not evaluate the flake ("+f.EvalErr+"); recognised it by its text instead")
+		d.Notes = append(d.Notes, "could not evaluate the flake ("+f.EvalErr+"); read the host names from flake.nix instead")
 	}
 	if f.GitRepo {
 		d.Notes = append(d.Notes, "the flake is a git repo: the module is git-added (intent-to-add) when first written")
+	}
+}
+
+// warnUnknownHost explains why the rebuild command names no host: without
+// one, nixos-rebuild falls back to the machine's hostname, which is often not
+// what the flake calls the configuration.
+func (d *Detected) warnUnknownHost(t *Target, h FlakeHost) {
+	if h.Name == "" {
+		d.Notes = append(d.Notes, fmt.Sprintf(
+			"could not find the name of the configuration in flake.nix: edit rebuild for target %q to add it, e.g. ... --flake %s#NAME", t.Name, filepath.Dir(t.File)))
 	}
 }
 

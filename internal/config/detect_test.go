@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +162,129 @@ func TestDetectNothing(t *testing.T) {
 	}
 	if c := roundTrip(t, d); len(c.Targets) != 0 {
 		t.Errorf("example should load as empty: %+v", c)
+	}
+}
+
+func hostNames(hosts []FlakeHost) []string {
+	var names []string
+	for _, h := range hosts {
+		names = append(names, h.Name)
+	}
+	return names
+}
+
+func TestScanHosts(t *testing.T) {
+	cases := []struct {
+		name, src, output string
+		want              []string
+	}{
+		{"dotted, as in a bug report", `{
+  inputs = { nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05"; };
+  outputs = { self, nixpkgs, ... }@inputs: {
+    nixosConfigurations.shift = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [ ./hardware-configuration.nix ./configuration.nix ];
+    };
+  };
+}`, "nixosConfigurations", []string{"shift"}},
+		{"attribute block", `{ outputs = { nixpkgs, ... }: {
+    nixosConfigurations = {
+      laptop = nixpkgs.lib.nixosSystem { modules = [ { networking.hostName = "x"; } ]; };
+      desktop = nixpkgs.lib.nixosSystem { modules = [ ./d.nix ]; };
+      "odd-name" = mk ./o.nix;
+    };
+  }; }`, "nixosConfigurations", []string{"laptop", "desktop", "odd-name"}},
+		{"quoted home-manager names", `{ outputs = _: {
+    homeConfigurations."me@laptop" = hm.lib.homeManagerConfiguration { };
+  }; }`, "homeConfigurations", []string{"me@laptop"}},
+		{"comments are ignored", `{ outputs = _: {
+    # nixosConfigurations.old = something;
+    /* nixosConfigurations.older = other; */
+    nixosConfigurations.current = x;
+  }; }`, "nixosConfigurations", []string{"current"}},
+		{"names computed by code", `{ outputs = _: {
+    nixosConfigurations = nixpkgs.lib.genAttrs hosts mkHost;
+  }; }`, "nixosConfigurations", []string{""}},
+		{"output not present", `{ outputs = _: { packages = { }; }; }`, "nixosConfigurations", nil},
+	}
+	for _, c := range cases {
+		if got := hostNames(scanHosts(c.src, c.output)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: scanHosts = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// fakeNix replaces the nix command with a script that fails for git+file
+// references, like nix does on a repository owned by another user, and
+// answers for plain directories.
+func fakeNix(t *testing.T, body string) {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "nix")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := nixBin
+	nixBin = script
+	t.Cleanup(func() { nixBin = old })
+}
+
+func flakeDir(t *testing.T, flake string, git bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "flake.nix"), []byte(flake), 0o644)
+	if git {
+		if err := exec.Command("git", "-C", dir, "init", "-q").Run(); err != nil {
+			t.Skip("git not available")
+		}
+	}
+	return dir
+}
+
+const shiftFlake = `{ outputs = { nixpkgs, ... }: {
+  nixosConfigurations.shift = nixpkgs.lib.nixosSystem { modules = [ ./configuration.nix ]; };
+}; }`
+
+func TestInspectFlakeFallsBackToPlainDirectory(t *testing.T) {
+	fakeNix(t, `case "$*" in
+  *git+file*) echo "error: repository path is not owned by current user" >&2; exit 1 ;;
+  *path:*) echo '{"nixos":[{"name":"shift","pkgsSet":false}],"darwin":[],"home":[]}' ;;
+esac`)
+	f := inspectFlake(flakeDir(t, shiftFlake, true))
+	if f == nil || !reflect.DeepEqual(hostNames(f.NixOS), []string{"shift"}) {
+		t.Fatalf("flake = %+v", f)
+	}
+	if f.EvalErr != "" {
+		t.Errorf("a successful retry should not report an error: %q", f.EvalErr)
+	}
+	if !f.GitRepo {
+		t.Error("the directory is a git repository")
+	}
+}
+
+func TestInspectFlakeFallsBackToScanning(t *testing.T) {
+	fakeNix(t, `echo "error: boom" >&2; exit 1`)
+	dir := flakeDir(t, shiftFlake, true)
+	f := inspectFlake(dir)
+	if f == nil || !reflect.DeepEqual(hostNames(f.NixOS), []string{"shift"}) {
+		t.Fatalf("host names should be read from flake.nix: %+v", f)
+	}
+	if !strings.Contains(f.EvalErr, "boom") {
+		t.Errorf("EvalErr = %q", f.EvalErr)
+	}
+
+	// The rebuild command then names the host, which is what failed for the
+	// user: nixos-rebuild guesses the machine's hostname otherwise.
+	d := Detect(System{OS: "linux", NixOSVersion: "25.11.1", Sudo: "sudo", Hostname: "nixos", Flakes: []*Flake{f}}, channels, "")
+	sys := roundTrip(t, d).Targets["system"]
+	if sys.Flake != dir+"#shift" || !strings.HasSuffix(sys.Rebuild, "--flake "+dir+"#shift") {
+		t.Errorf("rebuild must target the host: %+v", sys)
+	}
+}
+
+func TestDetectWarnsWhenHostNameIsUnknown(t *testing.T) {
+	d := Detect(System{OS: "linux", NixOSVersion: "25.11.1", Sudo: "sudo",
+		Flakes: []*Flake{{Dir: "/etc/nixos", NixOS: []FlakeHost{{}}}}}, channels, "")
+	if toml := d.TOML(); !strings.Contains(toml, "could not find the name of the configuration") || !strings.Contains(toml, "--flake /etc/nixos#NAME") {
+		t.Errorf("the missing host name should be explained:\n%s", toml)
 	}
 }
