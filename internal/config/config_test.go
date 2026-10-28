@@ -72,6 +72,40 @@ nixpkgs_config = false
 	}
 }
 
+func TestLoadScriptTarget(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/var/state")
+	c, err := Load(writeConfig(t, `
+[targets.mine]
+kind = "script"
+script = "~/bin/add-package --verbose"
+
+[targets.custom]
+kind = "script"
+script = "/usr/bin/true"
+file = "/tmp/custom-state.json"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, custom := c.Targets["mine"], c.Targets["custom"]
+	if !mine.IsScript() || strings.Contains(mine.Script, "~") || !strings.HasSuffix(mine.Script, "/bin/add-package --verbose") {
+		t.Errorf("script = %q", mine.Script)
+	}
+	if mine.File != "/var/state/lazyflakes/mine.json" || custom.File != "/tmp/custom-state.json" {
+		t.Errorf("state files: %q, %q", mine.File, custom.File)
+	}
+	if !mine.HasChannel("stable") || !mine.HasChannel("anything") {
+		t.Error("a script decides which channels it supports")
+	}
+	module := &Target{Kind: "nixos", Sets: map[string]string{"stable": "pkgs"}}
+	if !module.HasChannel("stable") || module.HasChannel("unstable") {
+		t.Error("a module target needs a package set per channel")
+	}
+	if _, err := Load(writeConfig(t, "[targets.x]\nkind = \"script\"\n")); err == nil {
+		t.Error("a script target without a script should be rejected")
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "missing.toml")); !errors.Is(err, ErrNoConfig) {
 		t.Errorf("missing file: got %v, want ErrNoConfig", err)
