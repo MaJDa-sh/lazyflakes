@@ -14,6 +14,7 @@ buildGoModule {
       ./go.mod
       ./go.sum
       (lib.fileset.fileFilter (file: file.hasExt "go") ./.)
+      ./examples # the tests run the example script
     ];
   };
 
