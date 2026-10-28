@@ -536,6 +536,14 @@ func (d Detected) TOML() string {
 # "sets" says how each channel's packages are reached inside that module:
 # a module argument such as pkgs (or one passed via specialArgs), or any
 # Nix expression. Packages from a channel without a set cannot be added.
+#
+# Rather do the installing yourself? A target can call your own script:
+#
+#   [targets.mine]
+#   kind = "script"
+#   script = "~/bin/add-package"   # called as: add-package add|remove channel:attr...
+#
+# See "Using your own script instead" in the README.
 `)
 	if len(d.Notes) > 0 {
 		b.WriteString("#\n# Detected:\n")

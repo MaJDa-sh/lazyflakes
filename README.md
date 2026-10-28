@@ -212,6 +212,53 @@ reject `nixpkgs.config`; set `nixpkgs_config = false` for them and allow
 unfree in your own configuration instead. Setup does this automatically for
 flake hosts that set `nixpkgs.pkgs`.
 
+### Using your own script instead
+
+If you already have a workflow for adding packages (a particular file, a
+particular structure), let your own script do the installing. lazyflakes
+then only provides the search, the channel choice and the review, and calls
+your script with the result:
+
+```toml
+[targets.mine]
+kind = "script"
+script = "~/bin/add-package"   # a command; extra arguments are appended
+```
+
+lazyflakes runs it in your terminal (sudo and prompts work) as
+
+```sh
+add-package remove channel:attr [channel:attr ...]   # first, if anything is removed
+add-package add    channel:attr [channel:attr ...]   # then, if anything is added
+```
+
+for example `add-package add stable:ripgrep unstable:jq`. A package that
+switches channel is a `remove` of the old one followed by an `add` of the new
+one. These variables are set too:
+
+| Variable | Meaning |
+|---|---|
+| `LAZYFLAKES_ACTION` | `add` or `remove` |
+| `LAZYFLAKES_TARGET` | the target's name, e.g. `mine` |
+| `LAZYFLAKES_ALLOW` | options enabled with `o`, comma-separated, e.g. `unfree,insecure` |
+
+Exit with a non-zero status to say it failed: nothing is recorded and the
+packages stay as they were. [`examples/install-hook.sh`](examples/install-hook.sh)
+is a complete example that keeps one package per line between two marker
+comments in a file of yours.
+
+Things to know:
+
+- lazyflakes can't see what your script did, so it records the packages the
+  script installed successfully in `~/.local/state/lazyflakes/<target>.json`
+  (`file = "…"` changes where). That record drives the ○ marks, the Installed
+  panel and the review popup, and it is also how you remove a package later.
+  If you change your files by hand, the record doesn't know.
+- There is no rebuild, import check or rollback for scripts, because
+  lazyflakes can't know what yours does. Rebuild at the end of the script if
+  you want to, and make `remove` safe to repeat.
+- `lazyflakes add|remove|list` work with script targets too (`-target mine`).
+
 ## Development
 
 ```sh
