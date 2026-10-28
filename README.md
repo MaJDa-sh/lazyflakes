@@ -119,9 +119,31 @@ With several hosts each gets its own module, e.g. `lazyflakes-laptop.nix`.
 imports = [ ./lazyflakes.nix ];
 ```
 
+In a flake, list it next to your other modules instead (or use `imports` in
+one of them):
+
+```nix
+nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+  system = "x86_64-linux";
+  modules = [
+    ./hardware-configuration.nix
+    ./configuration.nix
+    ./lazyflakes.nix   # <- add this
+  ];
+};
+```
+
 then rebuild once. From now on select packages, press `a`, review the
 changes and press `enter`. The install popup (and `lazyflakes list`) asks Nix
 whether the module really is part of your configuration and warns if not.
+
+If a rebuild fails with `flake … does not provide attribute
+'nixosConfigurations."nixos"…'`, the rebuild command in
+`~/.config/lazyflakes/config.toml` is missing the name of your configuration.
+`nixos-rebuild` then guesses your hostname, which is only right if the flake
+calls the configuration the same. Set it explicitly, as you do by hand:
+`rebuild = "sudo nixos-rebuild switch --flake /etc/nixos#myhost"`.
+`lazyflakes setup` reads the name from your flake and does this for you.
 
 ### What happens on apply
 
