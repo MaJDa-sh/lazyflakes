@@ -1,0 +1,104 @@
+{
+  "services.openssh.enable": {
+    "declarations": ["nixos/modules/services/networking/ssh/sshd.nix"],
+    "default": {"_type": "literalExpression", "text": "false"},
+    "description": "Whether to enable the OpenSSH secure shell daemon, which allows secure remote logins.\n",
+    "loc": ["services", "openssh", "enable"],
+    "readOnly": false,
+    "type": "boolean"
+  },
+  "services.openssh.settings.PermitRootLogin": {
+    "declarations": ["nixos/modules/services/networking/ssh/sshd.nix"],
+    "default": {"_type": "literalExpression", "text": "\"prohibit-password\""},
+    "description": "Whether the root user can login using ssh. See {manpage}`sshd_config(5)` and {option}`services.openssh.enable`.\n\n\n\nMore text.",
+    "loc": ["services", "openssh", "settings", "PermitRootLogin"],
+    "readOnly": false,
+    "type": "null or one of \"yes\", \"without-password\", \"prohibit-password\", \"forced-commands-only\", \"no\""
+  },
+  "networking.hostName": {
+    "declarations": [{"name": "nixos/modules/tasks/network-interfaces.nix", "url": "https://example.org"}],
+    "default": {"_type": "literalExpression", "text": "config.system.nixos.distroId"},
+    "description": "The name of the machine.",
+    "loc": ["networking", "hostName"],
+    "readOnly": false,
+    "type": "string matching the pattern ^$|^[[:alnum:]]([[:alnum:]_-]{0,61}[[:alnum:]])?$"
+  },
+  "services.openssh.ports": {
+    "default": {"_type": "literalExpression", "text": "[ 22 ]"},
+    "description": "Specifies on which ports the SSH daemon listens.",
+    "loc": ["services", "openssh", "ports"],
+    "readOnly": false,
+    "type": "list of 16 bit unsigned integer; between 0 and 65535 (both inclusive)"
+  },
+  "services.openssh.banner": {
+    "default": {"_type": "literalExpression", "text": "null"},
+    "example": {"_type": "literalExpression", "text": "\"Welcome\""},
+    "description": "Message to show.",
+    "loc": ["services", "openssh", "banner"],
+    "readOnly": false,
+    "type": "null or string"
+  },
+  "services.xserver.videoDrivers": {
+    "default": {"_type": "literalExpression", "text": "[ \"modesetting\" \"fbdev\" ]"},
+    "example": {"_type": "literalExpression", "text": "[ \"nvidia\" \"amdgpu\" ]"},
+    "description": "The names of the video drivers.",
+    "loc": ["services", "xserver", "videoDrivers"],
+    "readOnly": false,
+    "type": "list of string"
+  },
+  "boot.loader.grub.timeout": {
+    "default": 5,
+    "description": "Seconds to wait.",
+    "loc": ["boot", "loader", "grub", "timeout"],
+    "readOnly": false,
+    "type": "null or signed integer"
+  },
+  "services.postgresql.dataDir": {
+    "description": "The data directory.",
+    "loc": ["services", "postgresql", "dataDir"],
+    "readOnly": false,
+    "type": "absolute path"
+  },
+  "services.nginx.virtualHosts.<name>.root": {
+    "description": "Root of the site.",
+    "loc": ["services", "nginx", "virtualHosts", "<name>", "root"],
+    "readOnly": false,
+    "type": "null or absolute path"
+  },
+  "system.build.toplevel": {
+    "description": "Internal.",
+    "loc": ["system", "build", "toplevel"],
+    "readOnly": true,
+    "type": "package"
+  },
+  "programs.git.config": {
+    "description": "Git settings.",
+    "loc": ["programs", "git", "config"],
+    "readOnly": false,
+    "type": "attribute set of (attribute set)"
+  },
+  "services.foo.size": {
+    "description": "A union.",
+    "loc": ["services", "foo", "size"],
+    "readOnly": false,
+    "type": "string or signed integer"
+  },
+  "programs.git.package": {
+    "description": "The git package.",
+    "loc": ["programs", "git", "package"],
+    "readOnly": false,
+    "type": "null or package"
+  },
+  "environment.systemPackages": {
+    "description": "Packages for the system profile.",
+    "loc": ["environment", "systemPackages"],
+    "readOnly": false,
+    "type": "list of package"
+  },
+  "systemd.services.\"odd name\".enable": {
+    "description": "Quoted segment.",
+    "loc": ["systemd", "services", "odd name", "enable"],
+    "readOnly": false,
+    "type": "boolean"
+  }
+}
