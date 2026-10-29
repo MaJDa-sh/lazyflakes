@@ -39,6 +39,7 @@ const (
 	popupConfirm
 	popupOptions
 	popupSystem
+	popupValue // the value editor of the Options tab
 )
 
 type loadedMsg struct {
@@ -96,6 +97,18 @@ type Model struct {
 	input   textinput.Model
 	spinner spinner.Model
 	focus   focus
+
+	// The Options tab.
+	tab        tab
+	queries    [2]string              // the search text of each tab
+	optData    map[string]*optionData // option lists by target name
+	olFiltered []int                  // indices into the current target's options
+	olCursor   int
+	olOffset   int
+	pendingSet []pendingSetting // options chosen and not applied yet
+	pendCursor int
+	setCursor  int
+	edit       *valueEditor
 
 	loads   []channelLoad
 	loading bool
@@ -157,8 +170,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampScroll()
 		return m, nil
 
+	case optionsLoadedMsg:
+		m.optionsLoaded(msg)
+		return m, nil
+
 	case spinner.TickMsg:
-		if !m.loading {
+		if !m.loading && !m.optionsBusy() {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -195,11 +212,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = fmt.Sprintf("error: updating %s failed, nothing was changed (%v)", msg.target, msg.err)
 		} else if msg.script {
-			m.status = fmt.Sprintf("%s updated by its script: %s packages", msg.target, msg.summary)
+			m.status = fmt.Sprintf("%s updated by its script: %s", msg.target, msg.summary)
 		} else if msg.rebuilt {
-			m.status = fmt.Sprintf("%s updated: %s packages", msg.target, msg.summary)
+			m.status = fmt.Sprintf("%s updated: %s", msg.target, msg.summary)
 		} else {
-			m.status = fmt.Sprintf("%s saved without rebuilding: %s packages", msg.target, msg.summary)
+			m.status = fmt.Sprintf("%s saved without rebuilding: %s", msg.target, msg.summary)
 		}
 		return m, nil
 
@@ -272,7 +289,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if key == "ctrl+r" && (m.err != nil || m.popup == popupNone && m.focus != focusSearch) {
+	if key == "ctrl+r" && (m.err != nil || m.popup == popupNone && m.focus != focusSearch && m.tab == tabPackages) {
 		m = m.startLoading(true)
 		m.err = nil
 		return m, m.loadAll(true)
@@ -282,6 +299,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	}
+	if m.popup == popupValue {
+		return m.handleEditorKey(msg)
 	}
 	if m.popup != popupNone {
 		return m.handlePopupKey(key)
@@ -299,6 +319,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = focusInstalled
 			return m, nil
 		}
+	}
+	if m.tab == tabOptions {
+		return m.handleOptionsKey(msg)
 	}
 	if m.focus == focusInstalled {
 		return m.handleInstalledKey(key)
@@ -332,6 +355,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "q":
 			return m, tea.Quit
+		case "t":
+			return m, m.switchTab()
 		case "tab":
 			m.focus = focusInstalled
 		case "shift+tab", "h", "left":
@@ -374,6 +399,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			m.refilter()
 		}
+	case "t":
+		return m, m.switchTab()
 	case "tab", "l", "right":
 		m.focus = focusSelected
 	case "shift+tab":

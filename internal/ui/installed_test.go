@@ -65,8 +65,8 @@ func TestPendingChangesAreShared(t *testing.T) {
 	m.focus = focusInstalled
 	next, _ := m.handleInstalledKey("d")
 	m = next.(Model)
-	if m.sys.pending() != 1 || !strings.Contains(m.status, "cowsay will be removed") {
-		t.Fatalf("pending = %d, status = %q", m.sys.pending(), m.status)
+	if m.sys.pending(false) != 1 || !strings.Contains(m.status, "cowsay will be removed") {
+		t.Fatalf("pending = %d, status = %q", m.sys.pending(false), m.status)
 	}
 
 	// Opening the review popup keeps the mark and adds the selection.
@@ -88,12 +88,12 @@ func TestPendingChangesAreShared(t *testing.T) {
 	m.popup = popupNone
 	next, _ = m.handleInstalledKey("u")
 	m = next.(Model)
-	if m.sys.pending() != 0 {
+	if m.sys.pending(false) != 0 {
 		t.Error("u should undo pending changes")
 	}
 	m.handleInstalledKey("d")
 	m.syncSystem(0, false, false)
-	if m.sys.pending() != 0 {
+	if m.sys.pending(false) != 0 {
 		t.Error("a sync without keepPending must start clean")
 	}
 }

@@ -54,15 +54,28 @@ func (m Model) View() string {
 	selH := max(5, bodyH/4)
 	instH := max(5, bodyH/4)
 
-	left := lipgloss.JoinVertical(lipgloss.Left,
-		m.searchView(leftW),
-		m.packagesView(leftW, bodyH-searchHeight),
-	)
-	right := lipgloss.JoinVertical(lipgloss.Left,
-		m.detailsView(rightW, bodyH-selH-instH),
-		m.selectedView(rightW, selH),
-		m.installedView(rightW, instH),
-	)
+	var left, right string
+	if m.tab == tabOptions {
+		left = lipgloss.JoinVertical(lipgloss.Left,
+			m.searchView(leftW),
+			m.optionsListView(leftW, bodyH-searchHeight),
+		)
+		right = lipgloss.JoinVertical(lipgloss.Left,
+			m.optionDetailsView(rightW, bodyH-selH-instH),
+			m.pendingView(rightW, selH),
+			m.setView(rightW, instH),
+		)
+	} else {
+		left = lipgloss.JoinVertical(lipgloss.Left,
+			m.searchView(leftW),
+			m.packagesView(leftW, bodyH-searchHeight),
+		)
+		right = lipgloss.JoinVertical(lipgloss.Left,
+			m.detailsView(rightW, bodyH-selH-instH),
+			m.selectedView(rightW, selH),
+			m.installedView(rightW, instH),
+		)
+	}
 	screen := lipgloss.JoinHorizontal(lipgloss.Top, left, right) + "\n" + m.footerView()
 
 	switch m.popup {
@@ -72,6 +85,8 @@ func (m Model) View() string {
 		screen = overlayCenter(screen, m.confirmView(), m.width, m.height)
 	case popupSystem:
 		screen = overlayCenter(screen, m.systemView(), m.width, m.height)
+	case popupValue:
+		screen = overlayCenter(screen, m.editorView(), m.width, m.height)
 	case popupOptions:
 		if m.optReturn == popupGenerate {
 			screen = overlayCenter(screen, m.generateView(), m.width, m.height)
@@ -213,7 +228,7 @@ func (m Model) listHeight() int {
 
 func (m Model) searchView(w int) string {
 	m.input.Width = w - 4
-	return panel("Search", "", []string{m.input.View()}, w, searchHeight, m.focus == focusSearch)
+	return panel(m.searchTitle(), "", []string{m.input.View()}, w, searchHeight, m.focus == focusSearch)
 }
 
 func (m Model) packagesView(w, h int) string {
@@ -367,17 +382,14 @@ func (m Model) selectedView(w, h int) string {
 
 func (m Model) footerView() string {
 	var keys [][2]string
-	switch m.focus {
-	case focusSearch:
-		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
-	case focusInstalled:
-		keys = [][2]string{{"j/k", "move"}, {"d", "remove"}, {"c", "channel"}, {"u", "undo"}, {"enter", "review & apply"}, {"1-3", "panels"}, {"q", "quit"}}
-	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "unselect"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"1-3", "panels"}, {"q", "quit"}}
-	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"1-3", "panels"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+	if m.tab == tabOptions {
+		keys = m.optionsFooterKeys()
+	} else {
+		keys = m.packagesFooterKeys()
 	}
 	switch m.popup {
+	case popupValue:
+		keys = [][2]string{{"enter", "confirm"}, {"esc", "cancel"}, {"ctrl+r", "typed/raw"}, {"j/k", "choose"}}
 	case popupGenerate:
 		keys = [][2]string{{"j/k", "format"}, {"enter", "write"}, {"s", "shell.nix"}, {"f", "flake.nix"}, {"e", ".envrc"}, {"o", "options"}, {"esc", "cancel"}}
 	case popupConfirm:
@@ -387,6 +399,27 @@ func (m Model) footerView() string {
 	case popupOptions:
 		keys = [][2]string{{"j/k", "move"}, {"space", "toggle"}, {"1-4", "toggle"}, {"esc", "done"}}
 	}
+	return m.renderFooter(keys)
+}
+
+// packagesFooterKeys are the key hints of the Packages tab.
+func (m Model) packagesFooterKeys() [][2]string {
+	var keys [][2]string
+	switch m.focus {
+	case focusSearch:
+		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
+	case focusInstalled:
+		keys = [][2]string{{"j/k", "move"}, {"d", "remove"}, {"c", "channel"}, {"u", "undo"}, {"enter", "review & apply"}, {"1-3", "panels"}, {"q", "quit"}}
+	case focusSelected:
+		keys = [][2]string{{"j/k", "move"}, {"space/d", "unselect"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"1-3", "panels"}, {"q", "quit"}}
+	default:
+		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"t", "options tab"}, {"o", "allow unfree…"}, {"1-3", "panels"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+	}
+	return keys
+}
+
+// renderFooter draws the key hints on the left and the status on the right.
+func (m Model) renderFooter(keys [][2]string) string {
 	parts := make([]string, len(keys))
 	for i, k := range keys {
 		parts[i] = keyStyle.Render(k[0]) + " " + k[1]

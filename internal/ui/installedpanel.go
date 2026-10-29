@@ -11,22 +11,32 @@ import (
 	"github.com/MaJDa-sh/lazyflakes/internal/config"
 )
 
-// installedRows are the indices of m.sys.items that are already installed.
-func (s sysState) installedRows() []int {
+// installedRows are the indices of m.sys.items that are already installed:
+// packages, or with settings set the options set through lazyflakes.
+func (s sysState) installedRows(settings bool) []int {
 	var rows []int
 	for i, it := range s.items {
-		if it.orig != "" {
+		if it.orig != "" && it.setting == settings {
 			rows = append(rows, i)
 		}
 	}
 	return rows
 }
 
-// pending counts installed packages marked for removal or a channel change.
-func (s sysState) pending() int {
+// changed reports whether an installed item moves to another channel, or
+// for a setting gets another value.
+func (it sysItem) changed() bool {
+	if it.setting {
+		return it.value != it.origValue
+	}
+	return it.entry.Channel != it.orig
+}
+
+// pending counts installed items marked for removal or a change.
+func (s sysState) pending(settings bool) int {
 	n := 0
-	for _, i := range s.installedRows() {
-		if it := s.items[i]; it.removed || it.entry.Channel != it.orig {
+	for _, i := range s.installedRows(settings) {
+		if it := s.items[i]; it.removed || it.changed() {
 			n++
 		}
 	}
@@ -45,10 +55,12 @@ func (m *Model) toggleRemoval(it *sysItem) {
 
 func (m Model) handleInstalledKey(key string) (tea.Model, tea.Cmd) {
 	s := &m.sys
-	rows := s.installedRows()
+	rows := s.installedRows(false)
 	switch key {
 	case "q":
 		return m, tea.Quit
+	case "t":
+		return m, m.switchTab()
 	case "tab":
 		m.focus = focusPackages
 	case "shift+tab":
@@ -112,7 +124,7 @@ func (m Model) installedView(w, h int) string {
 	case s.err != nil:
 		lines = append(lines, errStyle.Render(" "+s.err.Error()))
 	default:
-		rows := s.installedRows()
+		rows := s.installedRows(false)
 		title = fmt.Sprintf("[3] Installed %d", len(rows))
 		if len(s.targets) > 1 {
 			title += " · " + s.targets[s.target].Name + " ([ ] switch)"
@@ -149,10 +161,10 @@ func (m Model) installedView(w, h int) string {
 	}
 
 	footer := "d remove · c channel · enter apply"
-	if p := s.pending(); p > 0 {
+	if p := s.pending(false); p > 0 {
 		footer = fmt.Sprintf("%d pending · enter review & apply · u undo", p)
 	}
-	if !active && s.pending() == 0 {
+	if !active && s.pending(false) == 0 {
 		footer = "3 to focus"
 	}
 	return panel(title, footer, lines, w, h, active)

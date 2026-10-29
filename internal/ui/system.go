@@ -18,12 +18,25 @@ import (
 	"github.com/MaJDa-sh/lazyflakes/internal/managed"
 )
 
-// sysItem is one row of the system popup: a package already in the managed
-// module, or one about to be added. The Installed panel shows the former.
+// sysItem is one row of the system popup: a package or an option setting
+// already in the managed module, or one about to be added. The Installed
+// panel shows installed packages, the Set panel installed settings.
 type sysItem struct {
-	entry   managed.Entry
-	orig    string // channel in the module; "" for a package being added
+	entry   managed.Entry // for a setting, Attr is its attribute path
+	orig    string        // channel in the module; "" for something being added
 	removed bool
+
+	setting   bool   // an option setting rather than a package
+	value     string // the Nix value of a setting, as it will be written
+	origValue string // the value in the module, for installed settings
+}
+
+// itemKey tells packages and settings with the same name apart.
+func itemKey(it sysItem) string {
+	if it.setting {
+		return "s:" + it.entry.Attr
+	}
+	return "p:" + it.entry.Attr
 }
 
 // sysState holds the pending changes to one target's managed module. The
@@ -104,19 +117,44 @@ func (m *Model) syncSystem(ti int, keepPending, check bool) tea.Cmd {
 	if keepPending && prev.err == nil && prev.target < len(prev.targets) && prev.targets[prev.target].Name == t.Name {
 		for _, it := range prev.items {
 			if it.orig != "" {
-				pending[it.entry.Attr] = it
+				pending[itemKey(it)] = it
 			}
 		}
 	}
 	present := map[string]bool{}
 	for _, e := range mod.Packages {
 		it := sysItem{entry: e, orig: e.Channel}
-		if p, ok := pending[e.Attr]; ok && p.orig == e.Channel {
+		if p, ok := pending[itemKey(it)]; ok && p.orig == e.Channel {
 			it.removed, it.entry.Channel = p.removed, p.entry.Channel
 		}
 		s.items = append(s.items, it)
 		present[e.Attr] = true
 	}
+	setAt := map[string]int{} // path -> index in s.items
+	for _, st := range mod.Settings {
+		it := sysItem{setting: true, entry: managed.Entry{Attr: st.Path}, orig: "set", value: st.Value, origValue: st.Value}
+		if p, ok := pending[itemKey(it)]; ok {
+			it.removed = p.removed
+		}
+		setAt[st.Path] = len(s.items)
+		s.items = append(s.items, it)
+	}
+	// Options chosen in the Options tab: a new setting, or another value for
+	// one that is set. A queued value the module already has is done.
+	queued := m.pendingSet[:0]
+	for _, ps := range m.pendingSet {
+		if i, ok := setAt[ps.path]; ok {
+			if s.items[i].origValue == ps.value {
+				continue
+			}
+			s.items[i].value = ps.value
+		} else {
+			s.items = append(s.items, sysItem{setting: true, entry: managed.Entry{Attr: ps.path}, value: ps.value})
+		}
+		queued = append(queued, ps)
+	}
+	m.pendingSet = queued
+	m.pendCursor = min(m.pendCursor, max(0, len(m.pendingSet)-1))
 	for _, sel := range m.selected {
 		attr := m.pkgs[sel.pkg].Attr
 		if !present[attr] {
@@ -179,21 +217,31 @@ func (m Model) handleSystemKey(key string) (tea.Model, tea.Cmd) {
 			break
 		}
 		if it := &s.items[s.cursor]; it.orig == "" {
-			// Not installed yet: drop it from the selection altogether.
-			if p, ok := m.attrIndex[it.entry.Attr]; ok {
-				if i := m.selectionOf(p); i >= 0 {
-					m.selected = append(m.selected[:i], m.selected[i+1:]...)
-					m.selCursor = min(m.selCursor, max(0, len(m.selected)-1))
+			// Not applied yet: drop it from the selection altogether.
+			if it.setting {
+				for i, ps := range m.pendingSet {
+					if ps.path == it.entry.Attr {
+						m.pendingSet = append(m.pendingSet[:i], m.pendingSet[i+1:]...)
+						break
+					}
 				}
+				m.status = it.entry.Attr + " will not be set"
+			} else {
+				if p, ok := m.attrIndex[it.entry.Attr]; ok {
+					if i := m.selectionOf(p); i >= 0 {
+						m.selected = append(m.selected[:i], m.selected[i+1:]...)
+						m.selCursor = min(m.selCursor, max(0, len(m.selected)-1))
+					}
+				}
+				m.status = it.entry.Attr + " will not be installed"
 			}
-			m.status = it.entry.Attr + " will not be installed"
 			s.items = append(s.items[:s.cursor], s.items[s.cursor+1:]...)
 			s.cursor = min(s.cursor, max(0, len(s.items)-1))
 		} else {
 			m.toggleRemoval(it)
 		}
 	case "c":
-		if len(s.items) > 0 {
+		if len(s.items) > 0 && !s.items[s.cursor].setting {
 			m.cycleSystemChannel(&s.items[s.cursor])
 		}
 	case "enter":
@@ -227,15 +275,46 @@ func (m Model) channelIndex(name string) int {
 	return -1
 }
 
+// describe says what applying would do, e.g. "packages +1 −1, options +2".
+func (s sysState) describe() string {
+	var parts []string
+	for _, settings := range []bool{false, true} {
+		added, removed, moved := s.counts(func(it sysItem) bool { return it.setting == settings })
+		if added+removed+moved == 0 {
+			continue
+		}
+		label := "packages"
+		if settings {
+			label = "options"
+		}
+		part := fmt.Sprintf("%s +%d −%d", label, added, removed)
+		if moved > 0 {
+			part += fmt.Sprintf(" ~%d", moved)
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "no changes"
+	}
+	return strings.Join(parts, ", ")
+}
+
 // changes counts what applying the popup would do.
 func (s sysState) changes() (added, removed, moved int) {
+	return s.counts(func(sysItem) bool { return true })
+}
+
+func (s sysState) counts(include func(sysItem) bool) (added, removed, moved int) {
 	for _, it := range s.items {
+		if !include(it) {
+			continue
+		}
 		switch {
 		case it.orig == "" && !it.removed:
 			added++
 		case it.orig != "" && it.removed:
 			removed++
-		case it.orig != "" && it.entry.Channel != it.orig:
+		case it.orig != "" && it.changed():
 			moved++
 		}
 	}
@@ -250,6 +329,10 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 	mod := managed.Module{Options: s.opts | m.opts}
 	for _, it := range s.items {
 		if it.removed {
+			continue
+		}
+		if it.setting {
+			mod.Settings = append(mod.Settings, managed.Setting{Path: it.entry.Attr, Value: it.value})
 			continue
 		}
 		if !t.HasChannel(it.entry.Channel) {
@@ -275,15 +358,12 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 		return nil
 	}
 	if !plan.HasWork() {
-		m.status = "nothing to do: " + t.Name + " already has these packages"
+		m.status = "nothing to do: " + t.Name + " already has these packages and options"
 		return nil
 	}
 	m.popup = popupNone
 
-	summary := fmt.Sprintf("+%d −%d", added, removed)
-	if moved > 0 {
-		summary += fmt.Sprintf(" ~%d", moved)
-	}
+	summary := s.describe()
 	what := "saving " + t.File
 	switch {
 	case t.IsScript():
@@ -293,7 +373,7 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 	}
 	cmd := &termCmd{
 		cmd:    exec.Command("sh", "-c", plan.Script()),
-		banner: fmt.Sprintf("lazyflakes: %s (%s packages)\n", what, summary),
+		banner: fmt.Sprintf("lazyflakes: %s (%s)\n", what, summary),
 		pause:  true,
 	}
 	return tea.Exec(cmd, func(err error) tea.Msg {
@@ -345,16 +425,29 @@ func (m Model) systemView() string {
 			mark, note = "- ", "remove"
 		case it.orig == "":
 			mark, note = "+ ", "add"
-		case it.entry.Channel != it.orig:
+		case it.changed() && it.setting:
+			mark, note = "~ ", "was "+it.origValue
+		case it.changed():
 			mark, note = "~ ", it.orig+" → "+it.entry.Channel
 		}
-		channel := it.entry.Channel
-		version := m.versionOf(it.entry.Attr, channel)
-		if !t.HasChannel(channel) && !it.removed {
-			note = "no " + channel + " set in config"
+		var text string
+		if it.setting {
+			if note == "add" {
+				note = "set"
+			} else if note == "remove" {
+				note = "unset"
+			}
+			span := attrW + 9 + 14 + 2 // the columns a package row uses
+			text = fmt.Sprintf("%s%s %s", mark, padTo(ansi.Truncate(it.entry.Attr+" = "+it.value, span, "…"), span), note)
+		} else {
+			channel := it.entry.Channel
+			version := m.versionOf(it.entry.Attr, channel)
+			if !t.HasChannel(channel) && !it.removed {
+				note = "no " + channel + " set in config"
+			}
+			text = fmt.Sprintf("%s%s %-9s %-14s %s", mark, padTo(ansi.Truncate(it.entry.Attr, attrW, "…"), attrW), channel,
+				ansi.Truncate(version, 14, "…"), note)
 		}
-		text := fmt.Sprintf("%s%s %-9s %-14s %s", mark, padTo(ansi.Truncate(it.entry.Attr, attrW, "…"), attrW), channel,
-			ansi.Truncate(version, 14, "…"), note)
 		switch {
 		case i == s.cursor && it.removed:
 			lines = append(lines, cursorRemoveStyle.Render(padTo(" "+text, inner)))
@@ -364,14 +457,14 @@ func (m Model) systemView() string {
 			lines = append(lines, " "+errStyle.Render(text))
 		case it.removed:
 			lines = append(lines, " "+errStyle.Render(text))
-		case it.orig == "" || it.entry.Channel != it.orig:
+		case it.orig == "" || it.changed():
 			lines = append(lines, " "+markStyle.Render(text))
 		default:
 			lines = append(lines, " "+text)
 		}
 	}
 	if len(lines) == 0 {
-		lines = append(lines, dimStyle.Render(" nothing installed through lazyflakes yet: select packages with space and press a"))
+		lines = append(lines, dimStyle.Render(" nothing installed through lazyflakes yet: select packages or set options, then press a"))
 	}
 
 	opts := s.opts | m.opts
