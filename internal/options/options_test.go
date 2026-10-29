@@ -2,6 +2,7 @@ package options
 
 import (
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -160,6 +161,9 @@ func TestFormat(t *testing.T) {
 }
 
 func TestCheckSyntax(t *testing.T) {
+	if _, err := exec.LookPath("nix-instantiate"); err != nil {
+		t.Skip("nix-instantiate is not installed")
+	}
 	if err := CheckSyntax(`[ "a" "b" ]`); err != nil {
 		t.Errorf("valid expression rejected: %v", err)
 	}

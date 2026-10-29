@@ -35,7 +35,7 @@ jobs:
       # The end-to-end and VM tests need a NixOS host; run them locally
       # (see README, Development).
       - name: evaluate generated modules in real NixOS configurations
-        run: go test -count=1 -timeout 30m ./internal/managed
+        run: go test -count=1 -timeout 30m ./internal/managed ./internal/options ./internal/ui
         env:
           LAZYFLAKES_NIX_EVAL: "1"
         shell: nix develop --command bash -e {0}

@@ -15,6 +15,7 @@ buildGoModule {
       ./go.sum
       (lib.fileset.fileFilter (file: file.hasExt "go") ./.)
       ./examples # the tests run the example script
+      ./internal/options/testdata # fixtures of the tests; add new ones here
     ];
   };
 

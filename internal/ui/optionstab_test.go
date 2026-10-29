@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,7 +226,26 @@ func TestEditorTextRawAndExpressions(t *testing.T) {
 		t.Fatalf("text is quoted for Nix: %+v", m.pendingSet)
 	}
 
-	// An option of another type takes a raw expression, checked by the parser.
+	// Choices can be switched to a raw expression with ctrl+r.
+	m = selectOption(t, m, "services.openssh.settings.PermitRootLogin")
+	m = press(t, m, "enter")
+	if m.edit.choices == nil || m.edit.raw {
+		t.Fatalf("a choice is picked: %+v", m.edit)
+	}
+	next, _ := m.Update(keyMsg("ctrl+r"))
+	m = next.(Model)
+	if !m.edit.raw {
+		t.Error("ctrl+r should switch to raw")
+	}
+}
+
+// Raw expressions are checked with Nix's parser, so this needs nix-instantiate.
+func TestEditorChecksRawExpressions(t *testing.T) {
+	if _, err := exec.LookPath("nix-instantiate"); err != nil {
+		t.Skip("nix-instantiate is not installed")
+	}
+	m := optionsModel(t, "")
+	// An option of another type takes a raw expression.
 	m = selectOption(t, m, "programs.git.config")
 	m = press(t, m, "enter")
 	if !m.edit.raw {
@@ -238,20 +258,8 @@ func TestEditorTextRawAndExpressions(t *testing.T) {
 	}
 	m = typeText(t, m, "1; }")
 	m = press(t, m, "enter")
-	if m.popup != popupNone || len(m.pendingSet) != 2 || m.pendingSet[1].value != "{ a = 1; }" {
+	if m.popup != popupNone || len(m.pendingSet) != 1 || m.pendingSet[0].value != "{ a = 1; }" {
 		t.Errorf("pending = %+v popup=%v", m.pendingSet, m.popup)
-	}
-
-	// Choices can be switched to a raw expression with ctrl+r.
-	m = selectOption(t, m, "services.openssh.settings.PermitRootLogin")
-	m = press(t, m, "enter")
-	if m.edit.choices == nil || m.edit.raw {
-		t.Fatalf("a choice is picked: %+v", m.edit)
-	}
-	next, _ := m.Update(keyMsg("ctrl+r"))
-	m = next.(Model)
-	if !m.edit.raw {
-		t.Error("ctrl+r should switch to raw")
 	}
 }
 
