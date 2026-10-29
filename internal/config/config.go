@@ -42,6 +42,10 @@ type Target struct {
 	// written as nixpkgs.config.*; turn it off when the configuration gets
 	// its pkgs from elsewhere (nixpkgs.pkgs, readOnlyPkgs, useGlobalPkgs).
 	NixpkgsConfig *bool `toml:"nixpkgs_config"`
+	// OptionsSource overrides where the Options tab gets this target's
+	// option list: a flake installable whose output holds an options.json,
+	// e.g. "/etc/nixos#nixosConfigurations.laptop.config.system.build.manual.optionsJSON".
+	OptionsSource string `toml:"options_source"`
 
 	Sudo string `toml:"-"` // copied from Config.Sudo
 }
