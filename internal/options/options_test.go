@@ -84,6 +84,7 @@ func TestSettable(t *testing.T) {
 	m := load(t)
 	for name, want := range map[string]bool{
 		"services.openssh.enable":                 true,
+		"_module.args":                            false, // the module system's own
 		"system.build.toplevel":                   false, // read only
 		"services.nginx.virtualHosts.<name>.root": false, // needs a name first
 		"systemd.services.\"odd name\".enable":    true,
@@ -164,5 +165,20 @@ func TestCheckSyntax(t *testing.T) {
 	}
 	if err := CheckSyntax(`[ "a" `); err == nil || !strings.HasPrefix(err.Error(), "not valid Nix") {
 		t.Errorf("invalid expression accepted, err = %v", err)
+	}
+}
+
+func TestRelease(t *testing.T) {
+	for in, want := range map[string]string{
+		"25.11":                     "25.11",
+		"25.11.9586.10e7ad5bbcb4\n": "25.11",
+		"26.05-pre":                 "",
+		"26.05pre1234.abc":          "",
+		"unstable":                  "",
+		"":                          "",
+	} {
+		if got := release(in); got != want {
+			t.Errorf("release(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -15,8 +15,7 @@ import (
 
 // Env says which release of the system the options are for.
 type Env struct {
-	NixOSRelease       string // e.g. "25.11"; "" for unstable
-	HomeManagerRelease string
+	HomeManagerRelease string // e.g. "25.11"; "" for the development branch
 	// FallbackNixpkgs is a flake reference to use when the target's own
 	// nixpkgs cannot be found.
 	FallbackNixpkgs string

@@ -50,8 +50,12 @@ type Option struct {
 	Templated   bool // the name has a <name> or * part, which has to be chosen first
 }
 
-// Settable reports whether a user can set the option directly.
-func (o Option) Settable() bool { return !o.ReadOnly && !o.Templated }
+// Settable reports whether a user can set the option directly: it is not
+// read-only, does not need a name chosen first, and is not one of the
+// module system's own (_module.args and friends).
+func (o Option) Settable() bool {
+	return !o.ReadOnly && !o.Templated && !strings.HasPrefix(o.Name, "_")
+}
 
 type rawOption struct {
 	Type         string            `json:"type"`

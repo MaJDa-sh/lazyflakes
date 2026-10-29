@@ -83,6 +83,12 @@
     "readOnly": false,
     "type": "string or signed integer"
   },
+  "_module.args": {
+    "description": "Additional arguments passed to each module.",
+    "loc": ["_module", "args"],
+    "readOnly": false,
+    "type": "lazy attribute set of raw value"
+  },
   "programs.git.package": {
     "description": "The git package.",
     "loc": ["programs", "git", "package"],
