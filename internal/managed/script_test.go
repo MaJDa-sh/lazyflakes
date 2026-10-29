@@ -78,6 +78,40 @@ func TestPrepareScriptCallsRemovesBeforeAdds(t *testing.T) {
 	}
 }
 
+func TestScriptSetAndUnset(t *testing.T) {
+	tgt := scriptTarget(t, "true")
+	old := Module{Settings: []Setting{{"services.openssh.enable", "true"}, {"networking.hostName", `"old"`}, {"time.timeZone", `"UTC"`}}}
+	want := Module{Settings: []Setting{{"services.openssh.enable", "true"}, {"networking.hostName", `"new box"`}, {"boot.loader.timeout", "3"}}}
+	p, err := Prepare(tgt, old, want, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := p.Script()
+	if !strings.Contains(s, "run unset 'time.timeZone'") {
+		t.Errorf("a setting that is gone is unset:\n%s", s)
+	}
+	if !strings.Contains(s, `run set 'networking.hostName="new box"' 'boot.loader.timeout=3'`) {
+		t.Errorf("changed and new settings are set, in order:\n%s", s)
+	}
+	if strings.Contains(s, "services.openssh.enable") {
+		t.Errorf("an unchanged setting is not passed:\n%s", s)
+	}
+	if !p.HasWork() {
+		t.Error("settings are work")
+	}
+	if noop, _ := Prepare(tgt, old, old, false); noop.HasWork() {
+		t.Error("identical settings have nothing to do")
+	}
+
+	// Settings are kept in the recorded state.
+	if err := SaveState(tgt, want); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := Load(tgt); !reflect.DeepEqual(got.Settings, want.Settings) {
+		t.Errorf("state settings = %+v", got.Settings)
+	}
+}
+
 func TestScriptReceivesActionPackagesAndEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
@@ -160,7 +194,22 @@ func TestExampleHookScript(t *testing.T) {
 		return string(b)
 	}
 
-	got := apply(Module{Packages: []Entry{{"stable", "ripgrep"}, {"unstable", "jq"}}})
+	// Options go between their own markers.
+	os.WriteFile(packages, []byte("{\n  # lazyflakes:settings-begin\n  # lazyflakes:settings-end\n  environment.systemPackages = [\n    # lazyflakes:begin\n    # lazyflakes:end\n  ];\n}\n"), 0o644)
+	got := apply(Module{Settings: []Setting{{"services.openssh.enable", "true"}, {"networking.hostName", `"a b=c"`}}})
+	if !strings.Contains(got, "    services.openssh.enable = true;\n") || !strings.Contains(got, `    networking.hostName = "a b=c";`+"\n") {
+		t.Errorf("after setting options:\n%s", got)
+	}
+	got = apply(Module{Settings: []Setting{{"services.openssh.enable", "false"}}})
+	if strings.Contains(got, "hostName") || strings.Count(got, "services.openssh.enable") != 1 || !strings.Contains(got, "enable = false;") {
+		t.Errorf("after changing one option and unsetting another:\n%s", got)
+	}
+	got = apply(Module{})
+	if strings.Contains(got, "services.openssh") || !strings.Contains(got, "# lazyflakes:settings-end") {
+		t.Errorf("after unsetting everything:\n%s", got)
+	}
+
+	got = apply(Module{Packages: []Entry{{"stable", "ripgrep"}, {"unstable", "jq"}}})
 	for _, s := range []string{"    pkgs.ripgrep\n", "    pkgs-unstable.jq\n    # lazyflakes:end\n"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("after adding, missing %q:\n%s", s, got)

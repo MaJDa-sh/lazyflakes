@@ -52,6 +52,53 @@ func TestRenderParseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSettingsRoundTrip(t *testing.T) {
+	m := Module{
+		Packages: []Entry{{"stable", "ripgrep"}},
+		Options:  generate.Options(0).With(generate.Unfree),
+		Settings: []Setting{
+			{Path: "services.openssh.enable", Value: "true"},
+			{Path: "networking.hostName", Value: `"my box"`},
+			{Path: `systemd.services."odd name".enable`, Value: "false"},
+			{Path: "services.xserver.videoDrivers", Value: `[ "nvidia" "amdgpu" ]`},
+		},
+	}
+	src, err := Render(target("/etc/nixos/lazyflakes.nix"), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{
+		"  services.openssh.enable = true; # lazyflakes:set services.openssh.enable = true\n",
+		`  networking.hostName = "my box"; # lazyflakes:set networking.hostName = "my box"` + "\n",
+		`  systemd.services."odd name".enable = false; # lazyflakes:set systemd.services."odd name".enable = false` + "\n",
+	} {
+		if !strings.Contains(src, s) {
+			t.Errorf("missing %q in:\n%s", s, src)
+		}
+	}
+	if strings.Contains(src, "mkDefault (true); # lazyflakes:set") || strings.Contains(src, "lib.mkDefault services") {
+		t.Errorf("settings must be plain assignments:\n%s", src)
+	}
+	if got := Parse(src); !reflect.DeepEqual(got, m) {
+		t.Errorf("Parse(Render(m)) = %+v, want %+v", got, m)
+	}
+}
+
+func TestRenderRejectsBadSettings(t *testing.T) {
+	tgt := target("/x/lazyflakes.nix")
+	for name, settings := range map[string][]Setting{
+		"empty value":    {{Path: "a.b", Value: " "}},
+		"empty path":     {{Path: "", Value: "true"}},
+		"multi-line":     {{Path: "a.b", Value: "[\n 1\n]"}},
+		"duplicate path": {{Path: "a.b", Value: "1"}, {Path: "a.b", Value: "2"}},
+		"bad name":       {{Path: "a = b", Value: "1"}},
+	} {
+		if _, err := Render(tgt, Module{Settings: settings}); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
 func TestRenderEmptyAndMissingSet(t *testing.T) {
 	src, err := Render(target("/x/lazyflakes.nix"), Module{})
 	if err != nil || !strings.Contains(src, "environment.systemPackages = [\n  ];") || strings.Contains(src, "let") {

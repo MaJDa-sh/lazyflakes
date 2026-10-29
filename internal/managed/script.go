@@ -22,13 +22,21 @@ import (
 // hookOps are the calls a plan makes to the user's script.
 type hookOps struct {
 	removes, adds []Entry
-	allow         string // enabled options, comma-separated
+	unsets        []string  // option paths no longer set
+	sets          []Setting // options newly set or changed
+	allow         string    // enabled options, comma-separated
 }
 
 // stateFile is the JSON lazyflakes keeps for a script target.
 type stateFile struct {
-	Packages []stateEntry `json:"packages"`
-	Options  []string     `json:"options,omitempty"`
+	Packages []stateEntry   `json:"packages"`
+	Options  []string       `json:"options,omitempty"`
+	Settings []stateSetting `json:"settings,omitempty"`
+}
+
+type stateSetting struct {
+	Path  string `json:"path"`
+	Value string `json:"value"`
 }
 
 type stateEntry struct {
@@ -57,6 +65,9 @@ func Load(t *config.Target) (m Module, exists bool, err error) {
 	for _, e := range st.Packages {
 		m.Packages = append(m.Packages, Entry{Channel: e.Channel, Attr: e.Attr})
 	}
+	for _, s := range st.Settings {
+		m.Settings = append(m.Settings, Setting{Path: s.Path, Value: s.Value})
+	}
 	if opts, err := generate.ParseOptions(strings.Join(st.Options, ",")); err == nil {
 		m.Options = opts
 	}
@@ -68,6 +79,9 @@ func SaveState(t *config.Target, m Module) error {
 	st := stateFile{Options: m.Options.Keys()}
 	for _, e := range m.Packages {
 		st.Packages = append(st.Packages, stateEntry{Channel: e.Channel, Attr: e.Attr})
+	}
+	for _, s := range m.Settings {
+		st.Settings = append(st.Settings, stateSetting{Path: s.Path, Value: s.Value})
 	}
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
@@ -108,6 +122,17 @@ func Prepare(t *config.Target, old, want Module, rebuild bool) (Plan, error) {
 			ops.adds = append(ops.adds, w)
 		}
 	}
+	for _, o := range old.Settings {
+		if !slices.ContainsFunc(want.Settings, func(s Setting) bool { return s.Path == o.Path }) {
+			ops.unsets = append(ops.unsets, o.Path)
+		}
+	}
+	for _, w := range want.Settings {
+		i := slices.IndexFunc(old.Settings, func(s Setting) bool { return s.Path == w.Path })
+		if i < 0 || old.Settings[i].Value != w.Value {
+			ops.sets = append(ops.sets, w)
+		}
+	}
 	return Plan{Target: t, hook: ops, save: &want}, nil
 }
 
@@ -123,11 +148,12 @@ func (p Plan) Done(err error) error {
 
 // HasWork reports whether running the plan would change anything.
 func (p Plan) HasWork() bool {
-	return p.hook == nil || len(p.hook.removes)+len(p.hook.adds) > 0
+	return p.hook == nil || len(p.hook.removes)+len(p.hook.adds)+len(p.hook.unsets)+len(p.hook.sets) > 0
 }
 
 // hookScript is the shell script that calls the user's script: removals
-// first, then additions, each as one call with every package.
+// first, then additions, each as one call with every package, then the
+// options: `unset path...` and `set path=value...`.
 func (p Plan) hookScript() string {
 	t := p.Target
 	var b strings.Builder
@@ -155,6 +181,20 @@ run() {
 			args[i] = shq(e.Channel + ":" + e.Attr)
 		}
 		b.WriteString("run " + call.action + " " + strings.Join(args, " ") + "\n")
+	}
+	if len(p.hook.unsets) > 0 {
+		args := make([]string, len(p.hook.unsets))
+		for i, path := range p.hook.unsets {
+			args[i] = shq(path)
+		}
+		b.WriteString("run unset " + strings.Join(args, " ") + "\n")
+	}
+	if len(p.hook.sets) > 0 {
+		args := make([]string, len(p.hook.sets))
+		for i, s := range p.hook.sets {
+			args[i] = shq(s.Path + "=" + s.Value)
+		}
+		b.WriteString("run set " + strings.Join(args, " ") + "\n")
 	}
 	b.WriteString("step done\n")
 	return b.String()

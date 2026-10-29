@@ -71,6 +71,35 @@ func TestEvalChannelNixOS(t *testing.T) {
 	}
 }
 
+// A module with options evaluates in a real NixOS configuration and changes
+// the result, quoted attribute paths included.
+func TestEvalSettingsNixOS(t *testing.T) {
+	requireNixEval(t)
+	dir := t.TempDir()
+	tgt := &config.Target{Name: "system", Kind: "nixos", File: filepath.Join(dir, "lazyflakes.nix"),
+		Attribute: "environment.systemPackages", Sets: map[string]string{"stable": "pkgs"}}
+	writeModule(t, tgt, Module{
+		Packages: []Entry{{"stable", "hello"}},
+		Settings: []Setting{
+			{Path: "services.openssh.enable", Value: "true"},
+			{Path: "networking.hostName", Value: `"lazybox"`},
+			{Path: "time.timeZone", Value: `"Europe/Warsaw"`},
+			{Path: `systemd.services."odd-name".enable`, Value: "false"},
+			{Path: "services.xserver.videoDrivers", Value: `[ "nvidia" "amdgpu" ]`},
+		},
+	})
+	os.WriteFile(filepath.Join(dir, "configuration.nix"), []byte(`{ imports = [ ./lazyflakes.nix ]; `+minimalNixOS+` }`), 0o644)
+
+	out := evalNames(t, "eval", "--impure", "--json", "--expr",
+		`let c = (import <nixpkgs/nixos> { configuration = `+filepath.Join(dir, "configuration.nix")+`; }).config; in
+		 { ssh = c.services.openssh.enable; host = c.networking.hostName; tz = c.time.timeZone; drivers = c.services.xserver.videoDrivers; }`)
+	for _, want := range []string{`"ssh":true`, `"host":"lazybox"`, `"tz":"Europe/Warsaw"`, `"drivers":["nvidia","amdgpu"]`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("evaluated config lacks %s: %s", want, out)
+		}
+	}
+}
+
 func TestEvalFlakeNixOS(t *testing.T) {
 	requireNixEval(t)
 	dir := t.TempDir()

@@ -24,20 +24,29 @@ type Entry struct {
 	Attr    string
 }
 
+// Setting is a module option set through lazyflakes, such as
+// services.openssh.enable = true.
+type Setting struct {
+	Path  string // the attribute path, with quoted segments where needed
+	Value string // a one-line Nix expression
+}
+
 // Module is the content of a managed file.
 type Module struct {
 	Packages []Entry
-	Options  generate.Options
+	Options  generate.Options // nixpkgs.config options such as allow unfree
+	Settings []Setting
 }
 
 // Markers at the end of generated lines let Parse read the module back
 // without evaluating any Nix.
 const (
-	pkgMarker    = "# lazyflakes:pkg "
-	optionMarker = "# lazyflakes:option "
+	pkgMarker     = "# lazyflakes:pkg "
+	optionMarker  = "# lazyflakes:option "
+	settingMarker = "# lazyflakes:set "
 )
 
-// Parse reads the packages and options from a managed module.
+// Parse reads the packages, options and settings from a managed module.
 func Parse(src string) Module {
 	var m Module
 	sc := bufio.NewScanner(strings.NewReader(src))
@@ -50,6 +59,11 @@ func Parse(src string) Module {
 		} else if i := strings.Index(line, optionMarker); i >= 0 {
 			if o, err := generate.ParseOptions(strings.TrimSpace(line[i+len(optionMarker):])); err == nil {
 				m.Options |= o
+			}
+		} else if i := strings.Index(line, settingMarker); i >= 0 {
+			// The marker repeats the assignment: "path = value".
+			if path, value, ok := strings.Cut(line[i+len(settingMarker):], " = "); ok {
+				m.Settings = append(m.Settings, Setting{Path: path, Value: strings.TrimSpace(value)})
 			}
 		}
 	}
@@ -95,9 +109,13 @@ func Render(t *config.Target, m Module) (string, error) {
 		lets = append(lets, fmt.Sprintf("  %s = %s;", v, expr))
 	}
 
+	if err := checkSettings(m.Settings); err != nil {
+		return "", err
+	}
+
 	var b strings.Builder
-	fmt.Fprintf(&b, `# Managed by lazyflakes: this file is rewritten whenever packages are added
-# or removed there, so changes made here by hand are lost.
+	fmt.Fprintf(&b, `# Managed by lazyflakes: this file is rewritten whenever packages or options
+# are changed there, so changes made here by hand are lost.
 # Import it once from your configuration:  imports = [ ./%s ];
 { %s, ... }:
 `, filepath.Base(t.File), strings.Join(args, ", "))
@@ -115,12 +133,41 @@ func Render(t *config.Target, m Module) (string, error) {
 	if m.Options != 0 {
 		b.WriteString("\n")
 	}
+	// Plain assignments, not lib.mkDefault: if the same option is set
+	// differently elsewhere, the rebuild reports the conflict (and is rolled
+	// back) instead of silently ignoring what was chosen.
+	for _, s := range m.Settings {
+		fmt.Fprintf(&b, "  %s = %s; %s%s = %s\n", s.Path, s.Value, settingMarker, s.Path, s.Value)
+	}
+	if len(m.Settings) > 0 {
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "  %s = [\n", t.Attribute)
 	for _, e := range m.Packages {
 		fmt.Fprintf(&b, "    %s %s%s %s\n", generate.AttrPath(vars[e.Channel], e.Attr), pkgMarker, e.Channel, e.Attr)
 	}
 	b.WriteString("  ];\n}\n")
 	return b.String(), nil
+}
+
+// checkSettings rejects settings that would break the module or its
+// markers.
+func checkSettings(settings []Setting) error {
+	seen := map[string]bool{}
+	for _, s := range settings {
+		switch {
+		case strings.TrimSpace(s.Path) == "" || strings.TrimSpace(s.Value) == "":
+			return fmt.Errorf("setting %q needs a name and a value", s.Path)
+		case strings.ContainsAny(s.Path+s.Value, "\n\r"):
+			return fmt.Errorf("setting %s: the value must be on one line", s.Path)
+		case strings.Contains(s.Path, " = "):
+			return fmt.Errorf("setting %q: bad name", s.Path)
+		case seen[s.Path]:
+			return fmt.Errorf("setting %s is given twice", s.Path)
+		}
+		seen[s.Path] = true
+	}
+	return nil
 }
 
 // Imported reports whether a .nix file in the module's directory tree
