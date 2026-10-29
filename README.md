@@ -9,7 +9,8 @@ unstable channels side by side, then
 
 - drop into a shell with them (`enter`),
 - write a `shell.nix` or `flake.nix` (and `.envrc`) for the current project (`w`),
-- or install them into your NixOS, nix-darwin or home-manager configuration (`a`).
+- install them into your NixOS, nix-darwin or home-manager configuration (`a`),
+- and set the options of that configuration the same way (`t` for the Options tab).
 
 <p align="center">
   <img src="assets/demo.gif" alt="lazyflakes: searching packages, selecting from both channels, previewing a flake.nix and removing an installed package" width="900">
@@ -58,12 +59,16 @@ checkout `./install.sh` (installs to `~/.local/bin`, `PREFIX=…` to change).
 
 | Where | Keys |
 |---|---|
-| Everywhere | `1` Packages · `2` Selected · `3` Installed (or `tab` to cycle) · `q` quit |
-| [1] Packages | `/` search · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` options · `ctrl+r` reload |
+| Everywhere | `1` `2` `3` panels (or `tab` to cycle) · `t` switch between the Packages and Options tabs · `q` quit |
+| [1] Packages | `/` search · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` allow unfree… · `ctrl+r` reload |
 | [2] Selected | `j/k` move · `space/d` unselect · `c` switch channel · `enter` shell · `w` · `a` · `o` |
 | [3] Installed | `j/k` move · `d` mark for removal · `c` change channel · `u` undo · `enter` review and apply · `[`/`]` other target |
-| Write popup | `enter` write · `s`/`f` shell.nix / flake.nix · `e` toggle .envrc · `o` options |
-| Options | `space` or `1`-`4`: allow unfree, insecure, broken, unsupported |
+| Options tab: [1] Options | `/` search · `j/k` move · `enter` or `space` set a value · `a` review and apply · `[`/`]` other target · `ctrl+r` reload |
+| Options tab: [2] Pending | `j/k` move · `d` remove · `e` or `enter` edit |
+| Options tab: [3] Set | `j/k` move · `d` unset · `e` edit · `u` undo · `enter` review and apply |
+| Value editor | `enter` confirm · `esc` cancel · `j/k` choose (booleans and choices) · `ctrl+r` typed ↔ raw Nix |
+| Write popup | `enter` write · `s`/`f` shell.nix / flake.nix · `e` toggle .envrc · `o` allow unfree… |
+| Allow popup (`o`) | `space` or `1`-`4`: allow unfree, insecure, broken, unsupported |
 | Install popup | `enter` apply and rebuild · `s` save without rebuilding · `d` remove · `c` channel · `tab` next target |
 
 Packages lazyflakes installed get a hollow ○ in the package list and are
@@ -85,6 +90,19 @@ lazyflakes list                    # what lazyflakes installed, and whether it i
 ```
 
 (`-target NAME` picks another target, `-no-rebuild` only writes the module.)
+
+Options too:
+
+```sh
+lazyflakes set services.openssh.enable true
+lazyflakes set networking.hostName lazybox            # text is quoted for you
+lazyflakes set services.xserver.videoDrivers "nvidia, amdgpu"
+lazyflakes set -raw programs.git.config '{ user.name = "Me"; }'
+lazyflakes unset services.openssh.enable
+```
+
+The value is read according to the option's type and refused if it doesn't
+fit (`-raw` takes Nix as it is, syntax-checked).
 
 ## Installing into your system configuration
 
@@ -169,6 +187,8 @@ file = "/etc/nixos/lazyflakes.nix"    # the module lazyflakes owns
 rebuild = "sudo nixos-rebuild switch" # empty: only write the file
 # flake = "/etc/nixos#laptop"         # flake output, lets lazyflakes check the import
 # nixpkgs_config = false              # never write nixpkgs.config.* (see below)
+# options_source = "/etc/nixos#nixosConfigurations.laptop.config.system.build.manual.optionsJSON"
+#                                     # where the Options tab gets its list, if it can't tell
 # attribute = "environment.systemPackages"  # default for the kind
 
 [targets.system.sets]
@@ -212,6 +232,43 @@ reject `nixpkgs.config`; set `nixpkgs_config = false` for them and allow
 unfree in your own configuration instead. Setup does this automatically for
 flake hosts that set `nixpkgs.pkgs`.
 
+### Setting options
+
+Press `t` for the **Options tab**. It lists the options of your configuration
+(23,000 for NixOS, 4,700 for home-manager, 1,100 for nix-darwin) with the same
+search, details, pending list and review as packages. Press `enter` on an
+option to set it, `a` to review everything that is queued and apply it. The
+options end up in the managed `lazyflakes.nix` next to your packages:
+
+```nix
+services.openssh.enable = true; # lazyflakes:set services.openssh.enable = true
+time.timeZone = "Europe/Warsaw"; # lazyflakes:set time.timeZone = "Europe/Warsaw"
+```
+
+- **Where the list comes from.** Nix publishes every option as JSON: NixOS
+  as `config.system.build.manual.optionsJSON` of your own nixpkgs (your
+  flake's `nixpkgs` input, or `<nixpkgs>`), home-manager as its `docs-json`
+  package and nix-darwin as `optionsJSON`. They are fetched from the binary
+  cache in seconds, so the options always match the release you run. It is
+  built for whichever target is shown in the `[3]` panel (`[`/`]` switch).
+- **How a value is entered.** The option's type decides: booleans and choices
+  are picked from a list, integers, text, paths and lists of strings are
+  typed (and quoted for you), and a package option takes a name such as
+  `htop`. About four fifths of NixOS's options are of those kinds; for the
+  rest, and whenever you press `ctrl+r`, you type a Nix expression, which is
+  checked with Nix's parser before it is queued.
+- **What is hidden.** Read-only options and ones with a `<name>` part
+  (`services.nginx.virtualHosts.<name>.root`), which need a name chosen first,
+  can't be set directly and aren't listed (the panel says how many).
+- **Conflicts.** Options are written as plain assignments, not
+  `lib.mkDefault`. If your own configuration sets the same option to a
+  different value, NixOS reports the conflict, the rebuild fails and the
+  module is restored: nothing is silently ignored. A ○ in front of an option
+  means lazyflakes has set it, a ● that a value is queued.
+- **Script targets** get `set path=value ...` and `unset path ...` calls (see
+  below) and need `options_source` in the config to say where their options
+  come from, because a script can be about anything.
+
 ### Using your own script instead
 
 If you already have a workflow for adding packages (a particular file, a
@@ -240,7 +297,17 @@ one. These variables are set too:
 |---|---|
 | `LAZYFLAKES_ACTION` | `add` or `remove` |
 | `LAZYFLAKES_TARGET` | the target's name, e.g. `mine` |
-| `LAZYFLAKES_ALLOW` | options enabled with `o`, comma-separated, e.g. `unfree,insecure` |
+| `LAZYFLAKES_ALLOW` | the allow options enabled with `o`, comma-separated, e.g. `unfree,insecure` |
+
+Options chosen in the Options tab are separate calls:
+
+```sh
+add-package set  services.openssh.enable=true 'networking.hostName="lazybox"'
+add-package unset time.timeZone
+```
+
+(`path=value`, the value being a Nix expression; they come after the package
+calls.)
 
 Exit with a non-zero status to say it failed: nothing is recorded and the
 packages stay as they were. [`examples/install-hook.sh`](examples/install-hook.sh)
