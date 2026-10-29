@@ -43,7 +43,8 @@ func main() {
 			"  lazyflakes setup            detect your system configuration and write the config\n"+
 			"  lazyflakes add ATTR...      install packages into the default target and rebuild\n"+
 			"  lazyflakes remove ATTR...   remove packages installed through lazyflakes\n"+
-			"  lazyflakes list             show what lazyflakes installed\n"+
+			"  lazyflakes set OPTION VALUE set an option (unset OPTION removes it)\n"+
+			"  lazyflakes list             show what lazyflakes installed and set\n"+
 			"  lazyflakes version          print the version\n"+
 			"\nRun a command with -h for its flags.\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -81,6 +82,8 @@ var subcommands = map[string]func(args []string) error{
 	"setup":   runSetup,
 	"add":     func(args []string) error { return runChange(args, false) },
 	"remove":  func(args []string) error { return runChange(args, true) },
+	"set":     func(args []string) error { return runSet(args, false) },
+	"unset":   func(args []string) error { return runSet(args, true) },
 	"list":    runList,
 	"version": runVersion,
 }

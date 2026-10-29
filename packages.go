@@ -116,22 +116,33 @@ func runChange(args []string, remove bool) error {
 		return nil
 	}
 
-	plan, err := managed.Prepare(t, old, mod, !*noRebuild)
-	if err != nil {
+	ran, err := applyChange(t, old, mod, *noRebuild)
+	if err != nil || !ran {
 		return err
+	}
+	fmt.Printf("%s: %d → %d packages\n", t.Name, before, len(mod.Packages))
+	return nil
+}
+
+// applyChange moves target t from old to want the way the TUI does (writing
+// the module and rebuilding, or calling the script) and reports whether
+// there was anything to run.
+func applyChange(t *config.Target, old, want managed.Module, noRebuild bool) (ran bool, err error) {
+	plan, err := managed.Prepare(t, old, want, !noRebuild)
+	if err != nil {
+		return false, err
 	}
 	defer plan.Cleanup()
 	if !plan.HasWork() {
 		fmt.Printf("%s: nothing to do\n", t.Name)
-		return nil
+		return false, nil
 	}
 	cmd := exec.Command("sh", "-c", plan.Script())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := plan.Done(cmd.Run()); err != nil {
-		return fmt.Errorf("%s was not changed: %w", t.Name, err)
+		return false, fmt.Errorf("%s was not changed: %w", t.Name, err)
 	}
-	fmt.Printf("%s: %d → %d packages\n", t.Name, before, len(mod.Packages))
-	return nil
+	return true, nil
 }
 
 // defaultChannel is the channel a target maps to its own pkgs, else the
@@ -169,6 +180,9 @@ func runList(args []string) error {
 	}
 	for _, e := range mod.Packages {
 		fmt.Printf("%-40s %s\n", e.Attr, e.Channel)
+	}
+	for _, s := range mod.Settings {
+		fmt.Printf("%-40s = %s\n", s.Path, s.Value)
 	}
 	if keys := mod.Options.Keys(); len(keys) > 0 {
 		fmt.Printf("options: %s\n", strings.Join(keys, ", "))

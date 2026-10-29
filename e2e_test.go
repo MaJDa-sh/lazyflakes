@@ -224,3 +224,61 @@ sets = { stable = "pkgs" }
 		t.Fatalf("VM test failed: %v", err)
 	}
 }
+
+func TestE2ESetOptions(t *testing.T) {
+	e := newE2E(t)
+	sys := filepath.Join(e.dir, "nixos")
+	conf := filepath.Join(sys, "configuration.nix")
+	e.write(conf, "{ imports = [ ./lazyflakes.nix ]; "+container+" }\n")
+	cfg := filepath.Join(e.dir, "config.toml")
+	e.write(cfg, `[targets.system]
+kind = "nixos"
+file = '`+filepath.Join(sys, "lazyflakes.nix")+`'
+rebuild = 'cd `+sys+` && nixos-rebuild build -I nixos-config=`+conf+` -I nixpkgs=`+e.nixpkgs+`'
+sets = { stable = "pkgs" }
+`)
+	read := func(rel string) string {
+		b, _ := os.ReadFile(filepath.Join(sys, "result", rel))
+		return string(b)
+	}
+
+	// Typed values: a boolean and a string that has to be quoted.
+	e.run(false, "set", "-config", cfg, "services.openssh.enable", "true")
+	e.run(false, "set", "-config", cfg, "networking.hostName", "lazybox")
+	if !exists(filepath.Join(sys, "result", "etc", "ssh", "sshd_config")) {
+		t.Error("openssh is not enabled in the built system")
+	}
+	if got := strings.TrimSpace(read("etc/hostname")); got != "lazybox" {
+		t.Errorf("hostname = %q, want lazybox", got)
+	}
+	if out := e.run(false, "list", "-config", cfg); !strings.Contains(out, "networking.hostName") || !strings.Contains(out, `"lazybox"`) {
+		t.Errorf("list: %s", out)
+	}
+
+	// A value of the wrong type is refused before anything is written.
+	before, _ := os.ReadFile(filepath.Join(sys, "lazyflakes.nix"))
+	e.run(true, "set", "-config", cfg, "services.openssh.ports", "[ 22 ]", "extra")
+	e.run(true, "set", "-config", cfg, "services.openssh.settings.PermitRootLogin", "sometimes")
+	after, _ := os.ReadFile(filepath.Join(sys, "lazyflakes.nix"))
+	if string(before) != string(after) {
+		t.Errorf("refused values must not touch the module:\n%s\n---\n%s", before, after)
+	}
+
+	// An option that conflicts with the user's own configuration fails the
+	// rebuild, and the module goes back to what it was.
+	e.write(conf, "{ imports = [ ./lazyflakes.nix ]; networking.hostName = \"mine\"; "+container+" }\n")
+	e.run(true, "set", "-config", cfg, "networking.hostName", "other")
+	if got, _ := os.ReadFile(filepath.Join(sys, "lazyflakes.nix")); string(got) != string(after) {
+		t.Errorf("a conflict must restore the module:\n%s", got)
+	}
+
+	// Unsetting takes the option out again.
+	e.write(conf, "{ imports = [ ./lazyflakes.nix ]; "+container+" }\n")
+	e.run(false, "unset", "-config", cfg, "services.openssh.enable", "networking.hostName")
+	if exists(filepath.Join(sys, "result", "etc", "ssh", "sshd_config")) {
+		t.Error("openssh is still enabled after unset")
+	}
+	if got := strings.TrimSpace(read("etc/hostname")); got == "lazybox" {
+		t.Errorf("hostname is still lazybox after unset")
+	}
+}
