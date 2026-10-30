@@ -128,7 +128,7 @@ func TestE2EFlakeNixOS(t *testing.T) {
 	// setup evaluates the flake, writes the config and creates the module.
 	cfg := filepath.Join(e.dir, "config.toml")
 	out := e.run(false, "setup", "-yes", "-config", cfg, "-flake", flake, "-host", "box")
-	if !strings.Contains(out, "add ./lazyflakes.nix to the imports") {
+	if !strings.Contains(out, "add ./lazyflakes.nix to the modules list") {
 		t.Errorf("setup should ask for the import: %s", out)
 	}
 	module := filepath.Join(flake, "lazyflakes.nix")
