@@ -138,17 +138,38 @@ func packageExpr(s string) (string, error) {
 }
 
 // CheckSyntax asks Nix to parse expr, so a typo is caught before it reaches
-// a configuration.
+// a configuration. expr has to be one expression (wrapped, so that -1 does
+// not reach nix-instantiate as a flag) and also has to work where the
+// module puts it, as the value of a one-line assignment: a # comment in it
+// would hide the ; that follows.
 func CheckSyntax(expr string) error {
+	if err := parse("(" + expr + "\n)"); err != nil {
+		return err
+	}
+	if err := parse("{ x = " + expr + "; }"); err != nil {
+		if strings.Contains(expr, "#") {
+			return errors.New("not valid Nix on one line: a # comment would hide the rest of the line")
+		}
+		return err
+	}
+	return nil
+}
+
+// parse runs nix-instantiate --parse on expr. Without nix-instantiate
+// there is nothing to check with.
+func parse(expr string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "nix-instantiate", "--parse", "-E", expr).CombinedOutput()
 	if err == nil {
 		return nil
 	}
+	if ctx.Err() != nil {
+		return errors.New("could not check the value: nix-instantiate took too long")
+	}
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) {
-		return nil // no nix-instantiate: nothing to check with
+		return nil
 	}
 	msg := strings.TrimSpace(string(out))
 	if i := strings.Index(msg, "error:"); i >= 0 {

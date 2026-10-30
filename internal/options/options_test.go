@@ -170,6 +170,22 @@ func TestCheckSyntax(t *testing.T) {
 	if err := CheckSyntax(`[ "a" `); err == nil || !strings.HasPrefix(err.Error(), "not valid Nix") {
 		t.Errorf("invalid expression accepted, err = %v", err)
 	}
+	// Negative numbers are expressions, not flags of nix-instantiate.
+	if err := CheckSyntax(`-1`); err != nil {
+		t.Errorf("-1 rejected: %v", err)
+	}
+	// The module writes `path = value; # marker` on one line, where a
+	// comment would swallow the ; and break the whole file.
+	if err := CheckSyntax(`true # note`); err == nil || !strings.Contains(err.Error(), "comment") {
+		t.Errorf("a trailing comment must be refused, err = %v", err)
+	}
+	if err := CheckSyntax(`"a # b"`); err != nil {
+		t.Errorf("a # inside a string is fine: %v", err)
+	}
+	// Nothing may follow the value: it has to be one expression.
+	if err := CheckSyntax(`true; y = 1`); err == nil {
+		t.Error("a second assignment must be refused")
+	}
 }
 
 func TestRelease(t *testing.T) {
