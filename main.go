@@ -45,6 +45,8 @@ func main() {
 			"  lazyflakes remove ATTR...   remove packages installed through lazyflakes\n"+
 			"  lazyflakes set OPTION VALUE set an option (unset OPTION removes it)\n"+
 			"  lazyflakes list             show what lazyflakes installed and set\n"+
+			"  lazyflakes generations      list the generations of the system or home configuration\n"+
+			"  lazyflakes rollback [N]     go back to generation N (default: the previous one)\n"+
 			"  lazyflakes version          print the version\n"+
 			"\nRun a command with -h for its flags.\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -79,13 +81,15 @@ func main() {
 }
 
 var subcommands = map[string]func(args []string) error{
-	"setup":   runSetup,
-	"add":     func(args []string) error { return runChange(args, false) },
-	"remove":  func(args []string) error { return runChange(args, true) },
-	"set":     func(args []string) error { return runSet(args, false) },
-	"unset":   func(args []string) error { return runSet(args, true) },
-	"list":    runList,
-	"version": runVersion,
+	"setup":       runSetup,
+	"add":         func(args []string) error { return runChange(args, false) },
+	"remove":      func(args []string) error { return runChange(args, true) },
+	"set":         func(args []string) error { return runSet(args, false) },
+	"unset":       func(args []string) error { return runSet(args, true) },
+	"list":        runList,
+	"generations": runGenerations,
+	"rollback":    runRollback,
+	"version":     runVersion,
 }
 
 func envOr(key, fallback string) string {
