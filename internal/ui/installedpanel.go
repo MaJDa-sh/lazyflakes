@@ -61,6 +61,8 @@ func (m Model) handleInstalledKey(key string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "t":
 		return m, m.switchTab()
+	case "T":
+		return m, m.switchTab(true)
 	case "tab":
 		m.focus = focusPackages
 	case "shift+tab":

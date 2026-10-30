@@ -81,7 +81,7 @@ func runRollback(args []string) error {
 	defer plan.Cleanup()
 
 	fmt.Printf("%s: roll back from generation %d to %d (%s)\n\n", t.Name, plan.From.Number, to.Number, to.Date.Format("2006-01-02 15:04"))
-	fmt.Println(moduleSummary(plan))
+	fmt.Println(plan.ModuleSummary())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if lines, err := generations.Diff(ctx, plan.From.Link, to.Link); err != nil {
@@ -99,28 +99,6 @@ func runRollback(args []string) error {
 		return fmt.Errorf("rolling back %s: %w", t.Name, err)
 	}
 	return nil
-}
-
-// moduleSummary says what a rollback does to lazyflakes.nix.
-func moduleSummary(p generations.Plan) string {
-	file := p.Target.File
-	switch p.Module {
-	case generations.Unchanged:
-		return file + " already is what generation " + fmt.Sprint(p.To.Number) + " had."
-	case generations.NoRecord:
-		return fmt.Sprintf("Generation %d has no record of what lazyflakes installed, so %s stays as it is\nand the next rebuild installs its packages again.", p.To.Number, file)
-	}
-	var from managed.Module
-	if p.From.Record != nil {
-		from = *p.From.Record
-	} else if cur, _, err := managed.Load(p.Target); err == nil {
-		from = cur
-	}
-	changes := generations.Changes(from, *p.To.Record)
-	if len(changes) == 0 {
-		return file + " is restored as generation " + fmt.Sprint(p.To.Number) + " had it."
-	}
-	return file + " is restored as generation " + fmt.Sprint(p.To.Number) + " had it: " + strings.Join(changes, ", ")
 }
 
 // diffSummary lists at most max of the package changes.

@@ -55,7 +55,14 @@ func (m Model) View() string {
 	instH := max(5, bodyH/4)
 
 	var left, right string
-	if m.tab == tabOptions {
+	switch m.tab {
+	case tabGenerations:
+		left = lipgloss.JoinVertical(lipgloss.Left,
+			m.genHeaderView(leftW),
+			m.genListView(leftW, bodyH-searchHeight),
+		)
+		right = m.genChangesView(rightW, bodyH)
+	case tabOptions:
 		left = lipgloss.JoinVertical(lipgloss.Left,
 			m.searchView(leftW),
 			m.optionsListView(leftW, bodyH-searchHeight),
@@ -65,7 +72,7 @@ func (m Model) View() string {
 			m.pendingView(rightW, selH),
 			m.setView(rightW, instH),
 		)
-	} else {
+	default:
 		left = lipgloss.JoinVertical(lipgloss.Left,
 			m.searchView(leftW),
 			m.packagesView(leftW, bodyH-searchHeight),
@@ -87,6 +94,8 @@ func (m Model) View() string {
 		screen = overlayCenter(screen, m.systemView(), m.width, m.height)
 	case popupValue:
 		screen = overlayCenter(screen, m.editorView(), m.width, m.height)
+	case popupRollback:
+		screen = overlayCenter(screen, m.rollbackView(), m.width, m.height)
 	case popupOptions:
 		if m.optReturn == popupGenerate {
 			screen = overlayCenter(screen, m.generateView(), m.width, m.height)
@@ -382,9 +391,12 @@ func (m Model) selectedView(w, h int) string {
 
 func (m Model) footerView() string {
 	var keys [][2]string
-	if m.tab == tabOptions {
+	switch m.tab {
+	case tabOptions:
 		keys = m.optionsFooterKeys()
-	} else {
+	case tabGenerations:
+		keys = m.generationsFooterKeys()
+	default:
 		keys = m.packagesFooterKeys()
 	}
 	switch m.popup {
@@ -398,6 +410,8 @@ func (m Model) footerView() string {
 		keys = [][2]string{{"enter", "apply"}, {"s", "save only"}, {"d", "remove"}, {"c", "channel"}, {"tab", "target"}, {"esc", "close"}}
 	case popupOptions:
 		keys = [][2]string{{"j/k", "move"}, {"space", "toggle"}, {"1-4", "toggle"}, {"esc", "done"}}
+	case popupRollback:
+		keys = [][2]string{{"enter", "roll back"}, {"esc", "cancel"}}
 	}
 	return m.renderFooter(keys)
 }

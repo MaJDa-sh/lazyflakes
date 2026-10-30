@@ -27,6 +27,8 @@ type tab int
 const (
 	tabPackages tab = iota
 	tabOptions
+	tabGenerations
+	tabCount
 )
 
 // optionData is the option list of one target.
@@ -115,17 +117,24 @@ func (m Model) optionsBusy() bool {
 	return false
 }
 
-// switchTab toggles between the Packages and Options tabs. Each keeps its
-// own search text.
-func (m *Model) switchTab() tea.Cmd {
+// switchTab moves to the next tab (t), or with back to the previous one
+// (T): Packages, Options, Generations. Each keeps its own search text.
+func (m *Model) switchTab(back ...bool) tea.Cmd {
 	m.queries[m.tab] = m.input.Value()
-	m.tab = tabOptions - m.tab
+	step := tab(1)
+	if len(back) > 0 && back[0] {
+		step = tabCount - 1
+	}
+	m.tab = (m.tab + step) % tabCount
 	m.input.SetValue(m.queries[m.tab])
 	m.focus = focusPackages
-	if m.tab == tabPackages {
+	switch m.tab {
+	case tabPackages:
 		m.input.Placeholder = "type / to search packages…"
 		m.refilter()
 		return nil
+	case tabGenerations:
+		return m.loadGenerations()
 	}
 	m.input.Placeholder = "type / to search options…"
 	return m.ensureOptions()
@@ -284,6 +293,8 @@ func (m Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "t":
 		return m, m.switchTab()
+	case "T":
+		return m, m.switchTab(true)
 	case "a":
 		return m, m.openSystem()
 	case "o":
@@ -598,10 +609,9 @@ func (m *Model) queueSetting(path, value string) {
 // ---- views ----
 
 func (m Model) searchTitle() string {
-	if m.tab == tabOptions {
-		return "Search  Packages [Options]  t switches"
-	}
-	return "Search  [Packages] Options  t switches"
+	names := []string{"Packages", "Options", "Generations"}
+	names[m.tab] = "[" + names[m.tab] + "]"
+	return "Search  " + strings.Join(names, " ") + "  t switches"
 }
 
 func shortKind(k options.Kind) string {
@@ -867,9 +877,9 @@ func (m Model) optionsFooterKeys() [][2]string {
 	case focusSearch:
 		return [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		return [][2]string{{"j/k", "move"}, {"d", "remove"}, {"e", "edit"}, {"a", "review"}, {"t", "packages"}, {"1-3", "panels"}, {"q", "quit"}}
+		return [][2]string{{"j/k", "move"}, {"d", "remove"}, {"e", "edit"}, {"a", "review"}, {"t", "generations"}, {"1-3", "panels"}, {"q", "quit"}}
 	case focusInstalled:
-		return [][2]string{{"j/k", "move"}, {"d", "unset"}, {"e", "edit"}, {"u", "undo"}, {"enter", "review & apply"}, {"t", "packages"}, {"1-3", "panels"}, {"q", "quit"}}
+		return [][2]string{{"j/k", "move"}, {"d", "unset"}, {"e", "edit"}, {"u", "undo"}, {"enter", "review & apply"}, {"t", "generations"}, {"1-3", "panels"}, {"q", "quit"}}
 	}
-	return [][2]string{{"/", "search"}, {"j/k", "move"}, {"enter", "set a value"}, {"a", "review & apply"}, {"[ ]", "target"}, {"t", "packages"}, {"1-3", "panels"}, {"ctrl+r", "reload"}, {"q", "quit"}}
+	return [][2]string{{"/", "search"}, {"j/k", "move"}, {"enter", "set a value"}, {"a", "review & apply"}, {"[ ]", "target"}, {"t", "generations"}, {"1-3", "panels"}, {"ctrl+r", "reload"}, {"q", "quit"}}
 }

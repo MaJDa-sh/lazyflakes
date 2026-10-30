@@ -71,6 +71,37 @@ func Prepare(t *config.Target, gens []Generation, to Generation) (Plan, error) {
 	return p, nil
 }
 
+// ModuleSummary says what the rollback does to lazyflakes.nix.
+func (p Plan) ModuleSummary() string {
+	file, n := p.Target.File, p.To.Number
+	switch p.Module {
+	case Unchanged:
+		return fmt.Sprintf("%s already is what generation %d had.", file, n)
+	case NoRecord:
+		return fmt.Sprintf("Generation %d has no record of what lazyflakes installed, so %s stays as it is and the next rebuild installs its packages again.", n, file)
+	}
+	if changes := ModuleChanges(p.Target, p.From, p.To); len(changes) > 0 {
+		return fmt.Sprintf("%s is restored as generation %d had it: %s", file, n, strings.Join(changes, ", "))
+	}
+	return fmt.Sprintf("%s is restored as generation %d had it.", file, n)
+}
+
+// ModuleChanges is what going from generation from to generation to does
+// to lazyflakes' packages and options. When from has no record, the
+// module as it is now stands in for it.
+func ModuleChanges(t *config.Target, from, to Generation) []string {
+	if to.Record == nil {
+		return nil
+	}
+	var base managed.Module
+	if from.Record != nil {
+		base = *from.Record
+	} else if cur, _, err := managed.Load(t); err == nil {
+		base = cur
+	}
+	return Changes(base, *to.Record)
+}
+
 // Cleanup removes the temporary files.
 func (p Plan) Cleanup() { p.write.Cleanup() }
 

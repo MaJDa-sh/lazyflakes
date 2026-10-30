@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/MaJDa-sh/lazyflakes/internal/generate"
+	"github.com/MaJDa-sh/lazyflakes/internal/generations"
 	"github.com/MaJDa-sh/lazyflakes/internal/nix"
 	"github.com/MaJDa-sh/lazyflakes/internal/search"
 )
@@ -39,7 +40,8 @@ const (
 	popupConfirm
 	popupOptions
 	popupSystem
-	popupValue // the value editor of the Options tab
+	popupValue    // the value editor of the Options tab
+	popupRollback // confirming a rollback in the Generations tab
 )
 
 type loadedMsg struct {
@@ -100,7 +102,7 @@ type Model struct {
 
 	// The Options tab.
 	tab        tab
-	queries    [2]string              // the search text of each tab
+	queries    [tabCount]string       // the search text of each tab
 	optData    map[string]*optionData // option lists by target name
 	olFiltered []int                  // indices into the current target's options
 	olCursor   int
@@ -111,6 +113,15 @@ type Model struct {
 	pendCursor int
 	setCursor  int
 	edit       *valueEditor
+
+	// The Generations tab.
+	gens       []generations.Generation
+	gensFor    string // the target gens belong to
+	gensErr    error
+	gensCursor int
+	gensOffset int
+	genDiffs   map[string]genDiff // by diffKey
+	rollback   *generations.Plan  // the rollback being confirmed
 
 	loads   []channelLoad
 	loading bool
@@ -189,6 +200,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		if m.tab == tabGenerations && m.popup == popupNone {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				return m, m.moveGen(-3)
+			case tea.MouseButtonWheelDown:
+				return m, m.moveGen(3)
+			}
+		}
 		if m.focus != focusSearch && !m.loading {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
@@ -198,6 +217,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case genDiffMsg:
+		if m.genDiffs != nil {
+			m.genDiffs[msg.key] = genDiff{lines: msg.lines, err: msg.err}
+		}
+		return m, nil
+
+	case rolledBackMsg:
+		return m, m.rolledBack(msg)
 
 	case shellExitedMsg:
 		if msg.err != nil {
@@ -327,6 +355,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.tab == tabOptions {
 		return m.handleOptionsKey(msg)
 	}
+	if m.tab == tabGenerations {
+		return m.handleGenerationsKey(key)
+	}
 	if m.focus == focusInstalled {
 		return m.handleInstalledKey(key)
 	}
@@ -361,6 +392,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "t":
 			return m, m.switchTab()
+		case "T":
+			return m, m.switchTab(true)
 		case "tab":
 			m.focus = focusInstalled
 		case "shift+tab", "h", "left":
@@ -405,6 +438,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "t":
 		return m, m.switchTab()
+	case "T":
+		return m, m.switchTab(true)
 	case "tab", "l", "right":
 		m.focus = focusSelected
 	case "shift+tab":
@@ -444,6 +479,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handlePopupKey(key string) (tea.Model, tea.Cmd) {
 	if m.popup == popupSystem {
 		return m.handleSystemKey(key)
+	}
+	if m.popup == popupRollback {
+		return m.handleRollbackKey(key)
 	}
 	if m.popup == popupOptions {
 		n := len(generate.AllOptions)

@@ -336,7 +336,8 @@ func TestTabSwitchKeepsSearchTextAndNeedsATarget(t *testing.T) {
 	m.input.SetValue("openssh")
 	m.tab = tabOptions
 
-	next, _ := m.handleOptionsKey(keyMsg("t"))
+	// T goes back a tab, t forward: Packages, Options, Generations.
+	next, _ := m.handleOptionsKey(keyMsg("T"))
 	m = next.(Model)
 	if m.tab != tabPackages || m.input.Value() != "" {
 		t.Errorf("packages tab has its own search text: tab=%v input=%q", m.tab, m.input.Value())
@@ -346,6 +347,13 @@ func TestTabSwitchKeepsSearchTextAndNeedsATarget(t *testing.T) {
 	m = next.(Model)
 	if m.tab != tabOptions || m.input.Value() != "openssh" {
 		t.Errorf("the options search text comes back: tab=%v input=%q", m.tab, m.input.Value())
+	}
+	m = press(t, m, "t")
+	if m.tab != tabGenerations {
+		t.Errorf("after Options comes Generations: tab=%v", m.tab)
+	}
+	if m = press(t, m, "t"); m.tab != tabPackages || m.input.Value() != "ripgrep" {
+		t.Errorf("and then Packages again: tab=%v input=%q", m.tab, m.input.Value())
 	}
 
 	// Without a configured target there is nothing to show options for.
