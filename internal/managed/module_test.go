@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -353,4 +354,46 @@ func TestNewPlanSudoForReadOnlyDirectory(t *testing.T) {
 	if !plan.Sudo {
 		t.Error("the directory is not writable, so sudo is needed")
 	}
+}
+
+func TestReadRecord(t *testing.T) {
+	m := Module{
+		Packages: []Entry{{"stable", "htop"}},
+		Options:  generate.Options(0).With(generate.Unfree),
+		Settings: []Setting{{Path: "a", Value: `"x # lazyflakes:set evil = 1"`}},
+	}
+	for _, tgt := range []*config.Target{
+		target("/x/lazyflakes.nix"),
+		{Name: "home", Kind: "home-manager", File: "/h/lazyflakes.nix", Attribute: "home.packages", Sets: map[string]string{"stable": "pkgs"}},
+	} {
+		src, err := Render(tgt, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The module line holds the record as a Nix string of JSON.
+		line := regexp.MustCompile(`(?m)^  (\S+)\.text = (".*");$`).FindStringSubmatch(src)
+		if line == nil || strings.Count(line[0], "#") != 0 {
+			t.Fatalf("%s: no record line without #:\n%s", tgt.Kind, src)
+		}
+		gen := t.TempDir()
+		path := filepath.Join(gen, RecordPath(tgt))
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte(unNix(t, line[2])), 0o644)
+		if got, ok, err := ReadRecord(tgt, gen); err != nil || !ok || !reflect.DeepEqual(got, m) {
+			t.Errorf("%s: record = %+v, %v, %v; want %+v", tgt.Kind, got, ok, err, m)
+		}
+	}
+	if want := filepath.Join("home-files", ".local", "share", "lazyflakes", "home.json"); RecordPath(&config.Target{Name: "home", Kind: "home-manager"}) != want {
+		t.Errorf("home-manager record path = %s", RecordPath(&config.Target{Name: "home", Kind: "home-manager"}))
+	}
+	if _, ok, err := ReadRecord(target("/x/lazyflakes.nix"), t.TempDir()); ok || err != nil {
+		t.Errorf("a generation without a record: ok=%v err=%v", ok, err)
+	}
+}
+
+// unNix reads back a string written by generate.NixString.
+func unNix(t *testing.T, s string) string {
+	t.Helper()
+	s = strings.TrimSuffix(strings.TrimPrefix(s, `"`), `"`)
+	return strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\$`, `$`, `\n`, "\n", `\t`, "\t", `\r`, "\r").Replace(s)
 }

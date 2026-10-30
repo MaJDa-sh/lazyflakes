@@ -188,7 +188,13 @@ func Render(t *config.Target, m Module) (string, error) {
 	for _, e := range m.Packages {
 		fmt.Fprintf(&b, "    %s %s%s %s\n", generate.AttrPath(vars[e.Channel], e.Attr), pkgMarker, e.Channel, e.Attr)
 	}
-	b.WriteString("  ];\n}\n")
+	b.WriteString("  ];\n")
+	record, err := recordLine(t, m)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString("\n  # What lazyflakes installed, kept in each generation for rollbacks.\n" + record)
+	b.WriteString("}\n")
 	return b.String(), nil
 }
 

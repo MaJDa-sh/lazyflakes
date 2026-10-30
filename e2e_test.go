@@ -9,8 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/MaJDa-sh/lazyflakes/internal/config"
+	"github.com/MaJDa-sh/lazyflakes/internal/managed"
 )
 
 // container keeps the test systems small: no kernel, initrd or bootloader.
@@ -45,6 +49,20 @@ func (e *e2e) write(path, content string) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		e.t.Fatal(err)
+	}
+}
+
+// wantRecord checks that a built generation records exactly these packages
+// as installed by lazyflakes, for rolling back to it later.
+func (e *e2e) wantRecord(t *config.Target, gen string, attrs ...string) {
+	e.t.Helper()
+	m, ok, err := managed.ReadRecord(t, gen)
+	var got []string
+	for _, p := range m.Packages {
+		got = append(got, p.Attr)
+	}
+	if err != nil || !ok || !slices.Equal(got, attrs) {
+		e.t.Errorf("record of %s: %v (ok=%v, err=%v), want %v", gen, got, ok, err, attrs)
 	}
 }
 
@@ -92,6 +110,7 @@ sets = { stable = "pkgs" }
 	if !exists(filepath.Join(sys, "result", "sw", "bin", "hello")) {
 		t.Fatal("hello is not in the built system")
 	}
+	e.wantRecord(&config.Target{Name: "system", Kind: "nixos"}, filepath.Join(sys, "result"), "hello")
 	if out := e.run(false, "list", "-config", cfg); !strings.Contains(out, "hello") {
 		t.Errorf("list: %s", out)
 	}
@@ -193,6 +212,7 @@ sets = { stable = "pkgs" }
 			t.Errorf("%s is not in the home-manager generation", bin)
 		}
 	}
+	e.wantRecord(&config.Target{Name: "home", Kind: "home-manager"}, filepath.Join(flake, "result"), "hello", "unrar")
 	if out := e.run(false, "list", "-config", cfg); strings.Contains(out, "not imported") || !strings.Contains(out, "options: unfree") {
 		t.Errorf("list: %s", out)
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -78,7 +79,7 @@ func TestEvalSettingsNixOS(t *testing.T) {
 	dir := t.TempDir()
 	tgt := &config.Target{Name: "system", Kind: "nixos", File: filepath.Join(dir, "lazyflakes.nix"),
 		Attribute: "environment.systemPackages", Sets: map[string]string{"stable": "pkgs"}}
-	writeModule(t, tgt, Module{
+	mod := Module{
 		Packages: []Entry{{"stable", "hello"}},
 		Settings: []Setting{
 			{Path: "services.openssh.enable", Value: "true"},
@@ -87,7 +88,8 @@ func TestEvalSettingsNixOS(t *testing.T) {
 			{Path: `systemd.services."odd-name".enable`, Value: "false"},
 			{Path: "services.xserver.videoDrivers", Value: `[ "nvidia" "amdgpu" ]`},
 		},
-	})
+	}
+	writeModule(t, tgt, mod)
 	os.WriteFile(filepath.Join(dir, "configuration.nix"), []byte(`{ imports = [ ./lazyflakes.nix ]; `+minimalNixOS+` }`), 0o644)
 
 	out := evalNames(t, "eval", "--impure", "--json", "--expr",
@@ -97,6 +99,17 @@ func TestEvalSettingsNixOS(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("evaluated config lacks %s: %s", want, out)
 		}
+	}
+
+	// The generation's record, /etc/lazyflakes/system.json, reads back as
+	// the module.
+	out = evalNames(t, "eval", "--impure", "--raw", "--expr",
+		`(import <nixpkgs/nixos> { configuration = `+filepath.Join(dir, "configuration.nix")+`; }).config.environment.etc."lazyflakes/system.json".text`)
+	gen := t.TempDir()
+	os.MkdirAll(filepath.Join(gen, "etc", "lazyflakes"), 0o755)
+	os.WriteFile(filepath.Join(gen, "etc", "lazyflakes", "system.json"), []byte(out), 0o644)
+	if got, ok, err := ReadRecord(tgt, gen); err != nil || !ok || !reflect.DeepEqual(got, mod) {
+		t.Errorf("record = %+v, %v, %v; want %+v", got, ok, err, mod)
 	}
 }
 

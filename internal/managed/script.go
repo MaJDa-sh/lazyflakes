@@ -63,6 +63,23 @@ func Load(t *config.Target) (m Module, exists bool, err error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return Module{}, true, fmt.Errorf("%s: %w", t.File, err)
 	}
+	return st.module(), true, nil
+}
+
+// toState is m in the JSON form of a state file or generation record.
+func toState(m Module) stateFile {
+	st := stateFile{Options: m.Options.Keys()}
+	for _, e := range m.Packages {
+		st.Packages = append(st.Packages, stateEntry{Channel: e.Channel, Attr: e.Attr})
+	}
+	for _, s := range m.Settings {
+		st.Settings = append(st.Settings, stateSetting{Path: s.Path, Value: s.Value})
+	}
+	return st
+}
+
+func (st stateFile) module() Module {
+	var m Module
 	for _, e := range st.Packages {
 		m.Packages = append(m.Packages, Entry{Channel: e.Channel, Attr: e.Attr})
 	}
@@ -72,19 +89,12 @@ func Load(t *config.Target) (m Module, exists bool, err error) {
 	if opts, err := generate.ParseOptions(strings.Join(st.Options, ",")); err == nil {
 		m.Options = opts
 	}
-	return m, true, nil
+	return m
 }
 
 // SaveState records m as the installed packages of a script target.
 func SaveState(t *config.Target, m Module) error {
-	st := stateFile{Options: m.Options.Keys()}
-	for _, e := range m.Packages {
-		st.Packages = append(st.Packages, stateEntry{Channel: e.Channel, Attr: e.Attr})
-	}
-	for _, s := range m.Settings {
-		st.Settings = append(st.Settings, stateSetting{Path: s.Path, Value: s.Value})
-	}
-	data, err := json.MarshalIndent(st, "", "  ")
+	data, err := json.MarshalIndent(toState(m), "", "  ")
 	if err != nil {
 		return err
 	}
