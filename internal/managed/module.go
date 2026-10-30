@@ -52,7 +52,9 @@ func Parse(src string) Module {
 	sc := bufio.NewScanner(strings.NewReader(src))
 	for sc.Scan() {
 		line := sc.Text()
-		if i := strings.Index(line, pkgMarker); i >= 0 {
+		if s, ok := parseSetting(line); ok {
+			m.Settings = append(m.Settings, s)
+		} else if i := strings.Index(line, pkgMarker); i >= 0 {
 			if f := strings.Fields(line[i+len(pkgMarker):]); len(f) == 2 {
 				m.Packages = append(m.Packages, Entry{Channel: f[0], Attr: f[1]})
 			}
@@ -70,6 +72,24 @@ func Parse(src string) Module {
 	return m
 }
 
+// parseSetting reads a setting line exactly as Render writes it:
+// "  X; # lazyflakes:set X" with X = "path = value". The assignment is there
+// twice, so it splits in one place only, whatever the value holds (marker
+// text included). Lines changed by hand fall back to the marker alone.
+func parseSetting(line string) (Setting, bool) {
+	body, ok := strings.CutPrefix(line, "  ")
+	sep := "; " + settingMarker
+	n := (len(body) - len(sep)) / 2
+	if !ok || n <= 0 || 2*n+len(sep) != len(body) || body[n:] != sep+body[:n] {
+		return Setting{}, false
+	}
+	path, value, ok := strings.Cut(body[:n], " = ")
+	if !ok {
+		return Setting{}, false
+	}
+	return Setting{Path: path, Value: strings.TrimSpace(value)}, true
+}
+
 // Read parses the module at path. A missing file is an empty module.
 func Read(path string) (m Module, exists bool, err error) {
 	data, err := os.ReadFile(path)
@@ -82,7 +102,14 @@ func Read(path string) (m Module, exists bool, err error) {
 	return Parse(string(data)), true, nil
 }
 
-var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
+var (
+	identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
+	// A package attribute is dot-separated names; whitespace, quotes and
+	// the like would break its line or the marker it is read back from.
+	attrRe = regexp.MustCompile(`^[^\s"#$\\;=.]+(\.[^\s"#$\\;=.]+)*$`)
+	// A channel name also becomes part of a Nix variable name.
+	channelRe = regexp.MustCompile(`^[A-Za-z0-9_'-]+$`)
+)
 
 // Render generates the module for target t.
 func Render(t *config.Target, m Module) (string, error) {
@@ -90,6 +117,12 @@ func Render(t *config.Target, m Module) (string, error) {
 	var lets []string
 	vars := map[string]string{} // channel -> Nix variable of its package set
 	for _, e := range m.Packages {
+		switch {
+		case !attrRe.MatchString(e.Attr):
+			return "", fmt.Errorf("%q is not a package attribute (no spaces, quotes, #, $, \\, ; or =, and no empty parts between dots)", e.Attr)
+		case !channelRe.MatchString(e.Channel):
+			return "", fmt.Errorf("channel name %q may only hold letters, digits, _, ' and -", e.Channel)
+		}
 		if _, ok := vars[e.Channel]; ok {
 			continue
 		}

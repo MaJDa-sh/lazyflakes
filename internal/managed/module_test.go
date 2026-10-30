@@ -99,6 +99,49 @@ func TestRenderRejectsBadSettings(t *testing.T) {
 	}
 }
 
+// A value may hold marker text: it is read back as written, not as the
+// setting or package its text names.
+func TestSettingsRoundTripWithMarkerText(t *testing.T) {
+	m := Module{Settings: []Setting{
+		{Path: "a", Value: `"x # lazyflakes:set evil = 1"`},
+		{Path: "b", Value: `"# lazyflakes:pkg stable evil"`},
+		{Path: "c", Value: `"x; # lazyflakes:set c = y"`},
+	}}
+	src, err := Render(target("/x/lazyflakes.nix"), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Parse(src); !reflect.DeepEqual(got, m) {
+		t.Errorf("Parse(Render(m)) = %+v, want %+v", got, m)
+	}
+}
+
+// A line edited by hand is still read from its marker.
+func TestParseHandEditedSetting(t *testing.T) {
+	got := Parse("  a = 2; # lazyflakes:set a = 1\n")
+	if want := []Setting{{Path: "a", Value: "1"}}; !reflect.DeepEqual(got.Settings, want) {
+		t.Errorf("settings = %+v, want %+v", got.Settings, want)
+	}
+}
+
+func TestRenderRejectsBadPackages(t *testing.T) {
+	tgt := target("/x/lazyflakes.nix")
+	tgt.Sets["my set"] = "pkgs"
+	for _, e := range []Entry{
+		{"stable", "foo bar"}, {"stable", "foo\n];"}, {"stable", `a"b`}, {"stable", "a#b"},
+		{"stable", "a.${b}"}, {"stable", ""}, {"stable", "a..b"}, {"stable", ".a"}, {"my set", "jq"},
+	} {
+		if _, err := Render(tgt, Module{Packages: []Entry{e}}); err == nil {
+			t.Errorf("%+v: expected an error", e)
+		}
+	}
+	for _, attr := range []string{"gtk+3", "haskellPackages.3d", "_1password-gui", "python3Packages.requests"} {
+		if _, err := Render(tgt, Module{Packages: []Entry{{"stable", attr}}}); err != nil {
+			t.Errorf("%s: %v", attr, err)
+		}
+	}
+}
+
 func TestRenderEmptyAndMissingSet(t *testing.T) {
 	src, err := Render(target("/x/lazyflakes.nix"), Module{})
 	if err != nil || !strings.Contains(src, "environment.systemPackages = [\n  ];") || strings.Contains(src, "let") {

@@ -188,6 +188,23 @@ func TestCheckSyntax(t *testing.T) {
 	}
 }
 
+func TestCheckPath(t *testing.T) {
+	if _, err := exec.LookPath("nix-instantiate"); err != nil {
+		t.Skip("nix-instantiate is not installed")
+	}
+	for _, ok := range []string{"services.openssh.enable", `users.users."a#b".isNormalUser`} {
+		if err := CheckPath(ok); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+	// Each of these would add something else to the module's line.
+	for _, bad := range []string{"a=null;b", "a # c", "a or b", "a b", ""} {
+		if err := CheckPath(bad); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}
+
 func TestRelease(t *testing.T) {
 	for in, want := range map[string]string{
 		"25.11":                     "25.11",

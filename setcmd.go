@@ -79,6 +79,9 @@ func runSet(args []string, unset bool) error {
 // according to its type.
 func resolveSetting(t *config.Target, name, value string, raw bool) (path, expr string, err error) {
 	if raw {
+		if err := options.CheckPath(name); err != nil {
+			return "", "", err
+		}
 		if err := options.CheckSyntax(value); err != nil {
 			return "", "", err
 		}

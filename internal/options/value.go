@@ -155,6 +155,17 @@ func CheckSyntax(expr string) error {
 	return nil
 }
 
+// CheckPath asks Nix whether path is one attribute path that can be
+// assigned on a line of its own, for option names given in raw mode.
+func CheckPath(path string) error {
+	for _, expr := range []string{"(x: x." + path + "\n)", "{ " + path + " = null; }"} {
+		if err := parse(expr); err != nil {
+			return fmt.Errorf("%s is not an option path: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // parse runs nix-instantiate --parse on expr. Without nix-instantiate
 // there is nothing to check with.
 func parse(expr string) error {
