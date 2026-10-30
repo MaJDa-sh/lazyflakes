@@ -59,13 +59,14 @@ checkout `./install.sh` (installs to `~/.local/bin`, `PREFIX=…` to change).
 
 | Where | Keys |
 |---|---|
-| Everywhere | `1` `2` `3` panels (or `tab` to cycle) · `t` switch between the Packages and Options tabs · `q` quit |
+| Everywhere | `1` `2` `3` panels (or `tab` to cycle) · `t`/`T` next/previous tab: Packages, Options, Generations · `q` quit |
 | [1] Packages | `/` search · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` allow unfree… · `ctrl+r` reload |
 | [2] Selected | `j/k` move · `space/d` unselect · `c` switch channel · `enter` shell · `w` · `a` · `o` |
 | [3] Installed | `j/k` move · `d` mark for removal · `c` change channel · `u` undo · `enter` review and apply · `[`/`]` other target |
 | Options tab: [1] Options | `/` search · `j/k` move · `enter` or `space` set a value · `a` review and apply · `[`/`]` other target · `ctrl+r` reload |
 | Options tab: [2] Pending | `j/k` move · `d` remove · `e` or `enter` edit |
 | Options tab: [3] Set | `j/k` move · `d` unset · `e` edit · `u` undo · `enter` review and apply |
+| Generations tab | `j/k` move · `enter` roll back to the selected generation · `[`/`]` other target · `ctrl+r` reload |
 | Value editor | `enter` confirm · `esc` cancel · `j/k` choose (booleans and choices) · `ctrl+r` typed ↔ raw Nix |
 | Write popup | `enter` write · `s`/`f` shell.nix / flake.nix · `e` toggle .envrc · `o` allow unfree… |
 | Allow popup (`o`) | `space` or `1`-`4`: allow unfree, insecure, broken, unsupported |
@@ -87,6 +88,8 @@ lazyflakes add ripgrep jq          # install into the default target and rebuild
 lazyflakes add -channel unstable -allow unfree vscode
 lazyflakes remove jq
 lazyflakes list                    # what lazyflakes installed, and whether it is imported
+lazyflakes generations             # the system's generations
+lazyflakes rollback                # back to the previous generation (or: rollback 41)
 ```
 
 (`-target NAME` picks another target, `-no-rebuild` only writes the module.)
@@ -190,6 +193,7 @@ rebuild = "sudo nixos-rebuild switch" # empty: only write the file
 # options_source = "/etc/nixos#nixosConfigurations.laptop.config.system.build.manual.optionsJSON"
 #                                     # where the Options tab gets its list, if it can't tell
 # attribute = "environment.systemPackages"  # default for the kind
+# profile = "/nix/var/nix/profiles/system-profiles/work"  # where its generations are, if not the default
 
 [targets.system.sets]
 stable = "pkgs"
@@ -268,6 +272,32 @@ time.timeZone = "Europe/Warsaw"; # lazyflakes:set time.timeZone = "Europe/Warsaw
 - **Script targets** get `set path=value ...` and `unset path ...` calls (see
   below) and need `options_source` in the config to say where their options
   come from, because a script can be about anything.
+
+### Rolling back
+
+Press `t` until the **Generations tab** shows. It lists the generations of
+the target (the system's for NixOS and nix-darwin, home-manager's for a home
+target) and, for the one under the cursor, what rolling back to it would
+change: lazyflakes' packages and options first, then every package version
+(`nix store diff-closures`). `enter` asks, then rolls back;
+`lazyflakes rollback [N]` does the same from the command line.
+
+A plain `nixos-rebuild switch --rollback` leaves `lazyflakes.nix` as it is,
+so the next rebuild brings the newer packages right back. lazyflakes avoids
+that: every generation built from the module records what lazyflakes had
+installed and set in it (`/etc/lazyflakes/<target>.json`, or
+`~/.local/share/lazyflakes/<target>.json` for home-manager), including
+generations you rebuild yourself. Rolling back
+
+1. switches the profile to the generation (if that fails, nothing changed),
+2. writes `lazyflakes.nix` as the generation had it (if that fails, the
+   profile is switched back),
+3. and activates the generation.
+
+So the running system, the boot menu and `lazyflakes.nix` agree afterwards,
+and the next rebuild keeps the rollback. Generations built before lazyflakes
+kept these records are marked "no record": rolling back to one switches the
+system but leaves `lazyflakes.nix` alone, and says so.
 
 ### Using your own script instead
 
