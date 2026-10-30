@@ -25,6 +25,7 @@ type hookOps struct {
 	unsets        []string  // option paths no longer set
 	sets          []Setting // options newly set or changed
 	allow         string    // enabled options, comma-separated
+	allowChanged  bool      // allow differs from what was recorded
 }
 
 // stateFile is the JSON lazyflakes keeps for a script target.
@@ -109,7 +110,7 @@ func Prepare(t *config.Target, old, want Module, rebuild bool) (Plan, error) {
 		return NewPlan(t, content, rebuild)
 	}
 
-	ops := &hookOps{allow: strings.Join(want.Options.Keys(), ",")}
+	ops := &hookOps{allow: strings.Join(want.Options.Keys(), ","), allowChanged: want.Options != old.Options}
 	for _, o := range old.Packages {
 		i := slices.IndexFunc(want.Packages, func(e Entry) bool { return e.Attr == o.Attr })
 		if i < 0 || want.Packages[i].Channel != o.Channel {
@@ -194,9 +195,11 @@ func (p Plan) partial() (m Module, ok bool) {
 	return m, true
 }
 
-// HasWork reports whether running the plan would change anything.
+// HasWork reports whether running the plan would change anything. For a
+// script target, new allow options alone are work too: no call is made,
+// but they are recorded and given to the script from then on.
 func (p Plan) HasWork() bool {
-	return p.hook == nil || len(p.hook.removes)+len(p.hook.adds)+len(p.hook.unsets)+len(p.hook.sets) > 0
+	return p.hook == nil || p.hook.allowChanged || len(p.hook.removes)+len(p.hook.adds)+len(p.hook.unsets)+len(p.hook.sets) > 0
 }
 
 // hookScript is the shell script that calls the user's script: removals

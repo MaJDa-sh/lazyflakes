@@ -76,6 +76,22 @@ func TestPrepareScriptCallsRemovesBeforeAdds(t *testing.T) {
 	if noop, _ := Prepare(tgt, old, old, false); noop.HasWork() {
 		t.Error("identical packages have nothing to do")
 	}
+
+	// New allow options alone are recorded without calling the script.
+	allow := old
+	allow.Options = generate.Options(0).With(generate.Unfree)
+	p, _ = Prepare(tgt, old, allow, false)
+	defer p.Cleanup()
+	if !p.HasWork() || strings.Contains(p.Script(), "\nrun ") {
+		t.Fatalf("options are work, without a call:\n%s", p.Script())
+	}
+	_, err = runScript(t, p)
+	if err := p.Done(err); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := Load(tgt); got.Options != allow.Options {
+		t.Errorf("options = %v, want %v", got.Options, allow.Options)
+	}
 }
 
 func TestScriptSetAndUnset(t *testing.T) {
