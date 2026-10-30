@@ -22,6 +22,8 @@ var (
 	labelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	keyStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	errStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	activeTabStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	inactiveTabStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 // panel draws a lazygit-style rounded box of exactly w×h cells with the title

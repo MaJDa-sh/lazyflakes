@@ -55,7 +55,7 @@ func TestGenerationsTabLists(t *testing.T) {
 		t.Fatalf("gens = %+v", m.gens)
 	}
 	v := m.View()
-	for _, want := range []string{"[Generations]", "[1] Generations 3 · system", "● ", "2 pkgs, 0 opts", "no record", "Current generation", "jq"} {
+	for _, want := range []string{"Generations", "[1] Generations 3 · system", "● ", "2 pkgs, 0 opts", "no record", "Current generation", "jq"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view lacks %q:\n%s", want, v)
 		}

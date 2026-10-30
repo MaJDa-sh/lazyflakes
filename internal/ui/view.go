@@ -418,18 +418,15 @@ func (m Model) footerView() string {
 
 // packagesFooterKeys are the key hints of the Packages tab.
 func (m Model) packagesFooterKeys() [][2]string {
-	var keys [][2]string
 	switch m.focus {
 	case focusSearch:
-		keys = [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
+		return [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusInstalled:
-		keys = [][2]string{{"j/k", "move"}, {"d", "remove"}, {"c", "channel"}, {"u", "undo"}, {"enter", "review & apply"}, {"1-3", "panels"}, {"q", "quit"}}
+		return [][2]string{{"j/k", "move"}, {"d", "remove"}, {"c", "channel"}, {"u", "undo"}, {"enter", "apply"}, {"t", "tab"}, {"q", "quit"}}
 	case focusSelected:
-		keys = [][2]string{{"j/k", "move"}, {"space/d", "unselect"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"o", "options"}, {"1-3", "panels"}, {"q", "quit"}}
-	default:
-		keys = [][2]string{{"/", "search"}, {"j/k", "move"}, {"space", "select"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write nix file"}, {"a", "install"}, {"t", "options tab"}, {"o", "allow unfree…"}, {"1-3", "panels"}, {"ctrl+r", "refresh"}, {"q", "quit"}}
+		return [][2]string{{"j/k", "move"}, {"d", "unselect"}, {"c", "channel"}, {"enter", "shell"}, {"w", "write"}, {"a", "install"}, {"t", "tab"}, {"q", "quit"}}
 	}
-	return keys
+	return [][2]string{{"/", "search"}, {"space", "select"}, {"enter", "shell"}, {"w", "write"}, {"a", "install"}, {"o", "allow"}, {"t", "tab"}, {"q", "quit"}}
 }
 
 // renderFooter draws the key hints on the left and the status on the right.

@@ -369,5 +369,5 @@ func (m Model) rollbackView() string {
 }
 
 func (m Model) generationsFooterKeys() [][2]string {
-	return [][2]string{{"j/k", "move"}, {"enter", "roll back"}, {"[ ]", "target"}, {"ctrl+r", "reload"}, {"t", "packages"}, {"q", "quit"}}
+	return [][2]string{{"j/k", "move"}, {"enter", "roll back"}, {"[ ]", "target"}, {"t", "tab"}, {"q", "quit"}}
 }

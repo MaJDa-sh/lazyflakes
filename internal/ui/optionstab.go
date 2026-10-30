@@ -609,9 +609,22 @@ func (m *Model) queueSetting(path, value string) {
 // ---- views ----
 
 func (m Model) searchTitle() string {
+	return "Search " + m.tabBar()
+}
+
+// tabBar renders the tab names with the active one highlighted and the
+// inactive ones dimmed, so you can see where you are at a glance.
+func (m Model) tabBar() string {
 	names := []string{"Packages", "Options", "Generations"}
-	names[m.tab] = "[" + names[m.tab] + "]"
-	return "Search  " + strings.Join(names, " ") + "  t switches"
+	parts := make([]string, len(names))
+	for i, name := range names {
+		if tab(i) == m.tab {
+			parts[i] = activeTabStyle.Render(" " + name + " ")
+		} else {
+			parts[i] = inactiveTabStyle.Render(" " + name + " ")
+		}
+	}
+	return strings.Join(parts, dimStyle.Render("│"))
 }
 
 func shortKind(k options.Kind) string {
@@ -877,9 +890,9 @@ func (m Model) optionsFooterKeys() [][2]string {
 	case focusSearch:
 		return [][2]string{{"enter", "done"}, {"esc", "clear"}, {"↑/↓", "move"}}
 	case focusSelected:
-		return [][2]string{{"j/k", "move"}, {"d", "remove"}, {"e", "edit"}, {"a", "review"}, {"t", "generations"}, {"1-3", "panels"}, {"q", "quit"}}
+		return [][2]string{{"j/k", "move"}, {"d", "remove"}, {"e", "edit"}, {"a", "apply"}, {"t", "tab"}, {"q", "quit"}}
 	case focusInstalled:
-		return [][2]string{{"j/k", "move"}, {"d", "unset"}, {"e", "edit"}, {"u", "undo"}, {"enter", "review & apply"}, {"t", "generations"}, {"1-3", "panels"}, {"q", "quit"}}
+		return [][2]string{{"j/k", "move"}, {"d", "unset"}, {"e", "edit"}, {"u", "undo"}, {"enter", "apply"}, {"t", "tab"}, {"q", "quit"}}
 	}
-	return [][2]string{{"/", "search"}, {"j/k", "move"}, {"enter", "set a value"}, {"a", "review & apply"}, {"[ ]", "target"}, {"t", "generations"}, {"1-3", "panels"}, {"ctrl+r", "reload"}, {"q", "quit"}}
+	return [][2]string{{"/", "search"}, {"enter", "set value"}, {"a", "apply"}, {"[ ]", "target"}, {"t", "tab"}, {"q", "quit"}}
 }

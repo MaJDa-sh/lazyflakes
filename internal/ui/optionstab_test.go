@@ -123,7 +123,7 @@ func TestOptionsTabListsOnlySettableOptions(t *testing.T) {
 	if len(m.olFiltered) < 4 {
 		t.Errorf("expected the openssh options, got %d", len(m.olFiltered))
 	}
-	if v := m.View(); !strings.Contains(v, "[2] Pending") || !strings.Contains(v, "[3] Set") || !strings.Contains(v, "[Options]") {
+	if v := m.View(); !strings.Contains(v, "[2] Pending") || !strings.Contains(v, "[3] Set") || !strings.Contains(v, "Options") {
 		t.Errorf("the options layout is missing its panels:\n%s", v)
 	}
 }
