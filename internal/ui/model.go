@@ -52,6 +52,10 @@ type loadedMsg struct {
 	err     error
 }
 
+type commandsLoadedMsg struct {
+	cmds nix.CommandMap
+}
+
 // channelLoad tracks loading one channel's package list.
 type channelLoad struct {
 	done bool
@@ -83,9 +87,10 @@ type Model struct {
 	selected  []selection // in the order they were marked
 	selCursor int
 
-	popup     popup
-	genCursor int  // index into generate.Formats
-	envrc     bool // also write .envrc for direnv
+	popup        popup
+	genCursor    int                    // index into generate.Formats
+	envrc        bool                   // also write .envrc for direnv
+	projectTools []generate.ProjectTool // detected from the working directory
 
 	opts      generate.Options // nixpkgs config for files and shells
 	optCursor int              // index into generate.AllOptions
@@ -142,6 +147,7 @@ func New(channels []generate.Channel, channel int, refresh bool, dir string, for
 	return Model{
 		channels: channels, channel: channel, refresh: refresh, dir: dir,
 		genCursor: int(format), envrc: envrc, opts: opts, configPath: configPath, input: in, spinner: sp,
+		projectTools: generate.DetectProject(dir),
 	}.startLoading(refresh)
 }
 
@@ -161,11 +167,15 @@ func (m Model) startLoading(refresh bool) Model {
 }
 
 func (m Model) loadAll(refresh bool) tea.Cmd {
-	cmds := []tea.Cmd{m.spinner.Tick}
+	cmds := []tea.Cmd{m.spinner.Tick, loadCommands}
 	for i, c := range m.channels {
 		cmds = append(cmds, load(i, c.Ref, refresh))
 	}
 	return tea.Batch(cmds...)
+}
+
+func loadCommands() tea.Msg {
+	return commandsLoadedMsg{cmds: nix.LoadCommands(context.Background())}
 }
 
 func load(channel int, flakeRef string, refresh bool) tea.Cmd {
@@ -258,6 +268,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case importCheckedMsg:
 		m.importChecked(msg)
+		return m, nil
+
+	case commandsLoadedMsg:
+		if m.index != nil && msg.cmds != nil {
+			m.index.SetCommands(msg.cmds)
+			m.refilter()
+		}
 		return m, nil
 
 	case tea.KeyMsg:

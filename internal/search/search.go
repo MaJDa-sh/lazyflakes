@@ -14,6 +14,9 @@ type Index struct {
 	attr  []string
 	pname []string
 	desc  []string
+	// cmdPkgs maps a command name to the attr indices of the packages that
+	// provide it (loaded from programs.sqlite in the background).
+	cmdPkgs map[string][]int
 }
 
 func NewIndex(pkgs []nix.Package) *Index {
@@ -30,6 +33,31 @@ func NewIndex(pkgs []nix.Package) *Index {
 	return idx
 }
 
+// SetCommands feeds the command→package map into the index so that
+// searching for a command name ranks the packages that provide it first.
+func (idx *Index) SetCommands(cmds nix.CommandMap) {
+	if len(cmds) == 0 {
+		return
+	}
+	// Build a quick attr→index map.
+	byAttr := make(map[string]int, len(idx.attr))
+	for i, a := range idx.attr {
+		byAttr[a] = i
+	}
+	idx.cmdPkgs = make(map[string][]int, len(cmds))
+	for cmd, pkgs := range cmds {
+		var indices []int
+		for _, pkg := range pkgs {
+			if i, ok := byAttr[strings.ToLower(pkg)]; ok {
+				indices = append(indices, i)
+			}
+		}
+		if len(indices) > 0 {
+			idx.cmdPkgs[strings.ToLower(cmd)] = indices
+		}
+	}
+}
+
 // Filter returns indices of matching packages, best match first. Every
 // whitespace-separated term must match the attr path, pname or description.
 // An empty query returns all packages in their original order.
@@ -43,17 +71,36 @@ func (idx *Index) Filter(query string) []int {
 		return all
 	}
 
+	// When a single term exactly matches a command name, the packages that
+	// provide it are boosted to the top even if their attr/pname/description
+	// doesn't contain the term (rg → ripgrep, fd → fd-find).
+	cmdHits := map[int]bool{}
+	if len(terms) == 1 {
+		for _, i := range idx.cmdPkgs[terms[0]] {
+			cmdHits[i] = true
+		}
+	}
+
 	type hit struct{ i, score int }
 	var hits []hit
 	for i := range idx.attr {
 		total := 0
 		for _, t := range terms {
 			s := idx.score(i, t)
+			if s == 0 && cmdHits[i] {
+				s = 1 // the term doesn't match by name, but the package provides the command
+			}
 			if s == 0 {
 				total = 0
 				break
 			}
 			total += s
+		}
+		if cmdHits[i] && total == 0 {
+			total = 1
+		}
+		if cmdHits[i] {
+			total += 900 // command match is very strong
 		}
 		if total > 0 {
 			hits = append(hits, hit{i, total})
