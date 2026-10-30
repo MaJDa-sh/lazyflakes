@@ -243,6 +243,16 @@ func TestApplyScript(t *testing.T) {
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Errorf("new module should be removed after a failed rebuild, stat err = %v", err)
 	}
+
+	// Without a backup nothing is written: a failed rebuild could not
+	// restore the module and would delete it as if it were new.
+	os.WriteFile(file, []byte("kept\n"), 0o644)
+	p5, _ := NewPlan(tgt, "unsafe\n", true)
+	defer p5.Cleanup()
+	t.Setenv("TMPDIR", filepath.Join(dir, "missing")) // mktemp fails
+	if err := runPlan(t, p5); err == nil || read() != "kept\n" {
+		t.Errorf("no backup: err=%v content=%q (want the module untouched)", err, read())
+	}
 }
 
 func TestApplyScriptGit(t *testing.T) {

@@ -102,11 +102,16 @@ func (p Plan) Script() string {
 	b.WriteString("set -u\n")
 	b.WriteString("file=" + shq(p.Target.File) + "\n")
 	b.WriteString("new=" + shq(p.NewFile) + "\n")
-	b.WriteString(`backup=$(mktemp)
+	// Without a backup a failed rebuild could not put the module back, and
+	// would delete it as if it were new, so nothing is written then.
+	b.WriteString(`step() { printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
+fail() { printf '\n\033[1;31m==>\033[0m %s\n' "$*"; [ -z "$backup" ] || rm -f "$backup"; exit 1; }
+backup=
 had_old=0
-if [ -e "$file" ]; then cp "$file" "$backup" && had_old=1; fi
-step() { printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
-fail() { printf '\n\033[1;31m==>\033[0m %s\n' "$*"; rm -f "$backup"; exit 1; }
+if [ -e "$file" ]; then
+  backup=$(mktemp) && cp "$file" "$backup" || fail "could not back up $file, so it was left as it was"
+  had_old=1
+fi
 
 step "writing $file"
 ` + sudo + `install -m 0644 "$new" "$file" || fail "could not write $file"
@@ -133,7 +138,7 @@ if ! sh -c ` + shq(p.Target.Rebuild) + `; then
 fi
 `)
 	}
-	b.WriteString(`rm -f "$backup"
+	b.WriteString(`[ -z "$backup" ] || rm -f "$backup"
 step "done"
 `)
 	return b.String()
