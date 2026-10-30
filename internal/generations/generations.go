@@ -52,6 +52,9 @@ var (
 
 // Profile is the Nix profile holding target t's generations.
 func Profile(t *config.Target) (string, error) {
+	if t.Profile != "" {
+		return t.Profile, nil
+	}
 	switch t.Kind {
 	case "nixos", "nix-darwin":
 		return systemProfile, nil

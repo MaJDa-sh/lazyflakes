@@ -48,6 +48,9 @@ type Target struct {
 	// option list: a flake installable whose output holds an options.json,
 	// e.g. "/etc/nixos#nixosConfigurations.laptop.config.system.build.manual.optionsJSON".
 	OptionsSource string `toml:"options_source"`
+	// Profile overrides the Nix profile that holds the target's
+	// generations: by default the system profile, or home-manager's.
+	Profile string `toml:"profile"`
 
 	Sudo string `toml:"-"` // copied from Config.Sudo
 }
@@ -170,6 +173,7 @@ func (t *Target) normalize() error {
 	if !filepath.IsAbs(t.File) {
 		return fmt.Errorf("file %q must be an absolute path", t.File)
 	}
+	t.Profile = ExpandHome(t.Profile)
 	return nil
 }
 
