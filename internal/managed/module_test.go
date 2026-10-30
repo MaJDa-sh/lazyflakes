@@ -142,6 +142,21 @@ func TestRenderRejectsBadPackages(t *testing.T) {
 	}
 }
 
+// A setting that names a package set gets it as a module argument, even
+// when no package comes from that set.
+func TestRenderArgumentsForSettings(t *testing.T) {
+	tgt := target("/x/lazyflakes.nix")
+	tgt.Sets["unstable"] = "pkgs-unstable"
+	src, err := Render(tgt, Module{Settings: []Setting{{Path: "programs.git.package", Value: "pkgs-unstable.git"}}})
+	if err != nil || !strings.Contains(src, "{ config, lib, pkgs, pkgs-unstable, ... }:") {
+		t.Errorf("err = %v\n%s", err, src)
+	}
+	src, _ = Render(tgt, Module{Settings: []Setting{{Path: "a", Value: "my-pkgs-unstable.git"}}})
+	if strings.Contains(src, "pkgs-unstable, ...") {
+		t.Errorf("only the set itself counts:\n%s", src)
+	}
+}
+
 func TestRenderEmptyAndMissingSet(t *testing.T) {
 	src, err := Render(target("/x/lazyflakes.nix"), Module{})
 	if err != nil || !strings.Contains(src, "environment.systemPackages = [\n  ];") || strings.Contains(src, "let") {

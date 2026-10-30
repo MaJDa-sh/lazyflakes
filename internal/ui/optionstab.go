@@ -88,6 +88,15 @@ func (m Model) curTarget() *config.Target {
 	return m.sys.targets[m.sys.target]
 }
 
+// packageSets are the current target's package sets besides pkgs, which
+// package values may name.
+func (m Model) packageSets() []string {
+	if t := m.curTarget(); t != nil {
+		return t.PackageSets()
+	}
+	return nil
+}
+
 func (m Model) curData() *optionData {
 	if t := m.curTarget(); t != nil {
 		return m.optData[t.Name]
@@ -524,7 +533,7 @@ func (m Model) handleEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if e.opt.Kind != options.Other {
 			if !e.raw && e.choices != nil {
 				// Carry the picked choice over as an expression to edit.
-				if v, err := e.opt.Format(e.choices[e.choice], false); err == nil {
+				if v, err := e.opt.Format(e.choices[e.choice], false, m.packageSets()); err == nil {
 					e.input.SetValue(v)
 					e.input.CursorEnd()
 				}
@@ -558,9 +567,9 @@ func (m *Model) confirmEditor() {
 	var value string
 	var err error
 	if e.choices != nil && !e.raw {
-		value, err = e.opt.Format(e.choices[e.choice], false)
+		value, err = e.opt.Format(e.choices[e.choice], false, m.packageSets())
 	} else {
-		value, err = e.opt.Format(e.input.Value(), e.raw)
+		value, err = e.opt.Format(e.input.Value(), e.raw, m.packageSets())
 		if err == nil && (e.raw || e.opt.Kind == options.Other) {
 			err = options.CheckSyntax(value)
 		}

@@ -105,7 +105,7 @@ func resolveSetting(t *config.Target, name, value string, raw bool) (path, expr 
 		if !o.Settable() {
 			return "", "", fmt.Errorf("%s cannot be set directly (read-only, or it needs a name such as a host)", name)
 		}
-		expr, err := o.Format(value, false)
+		expr, err := o.Format(value, false, t.PackageSets())
 		if err != nil {
 			return "", "", fmt.Errorf("%s takes %s (%s): %w", name, o.Kind, o.Type, err)
 		}

@@ -145,6 +145,15 @@ func Render(t *config.Target, m Module) (string, error) {
 	if err := checkSettings(m.Settings); err != nil {
 		return "", err
 	}
+	// A setting may name one of the target's package sets
+	// (programs.git.package = pkgs-unstable.git), which is then an argument
+	// too, whether or not a package is installed from it.
+	for _, set := range t.PackageSets() {
+		uses := regexp.MustCompile(`(^|[^A-Za-z0-9_'.-])` + regexp.QuoteMeta(set) + `\.`)
+		if !slices.Contains(args, set) && slices.ContainsFunc(m.Settings, func(s Setting) bool { return uses.MatchString(s.Value) }) {
+			args = append(args, set)
+		}
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `# Managed by lazyflakes: this file is rewritten whenever packages or options

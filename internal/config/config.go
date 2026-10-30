@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -86,6 +88,21 @@ func StateDir() string {
 		return filepath.Join(os.TempDir(), "lazyflakes")
 	}
 	return filepath.Join(home, ".local", "state", "lazyflakes")
+}
+
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
+
+// PackageSets are the target's package sets that its module gets as
+// arguments besides pkgs, such as pkgs-unstable passed in specialArgs.
+func (t *Target) PackageSets() []string {
+	var sets []string
+	for _, expr := range t.Sets {
+		if expr != "pkgs" && identRe.MatchString(expr) && !slices.Contains(sets, expr) {
+			sets = append(sets, expr)
+		}
+	}
+	slices.Sort(sets)
+	return sets
 }
 
 // WritesNixpkgsConfig reports whether options go into nixpkgs.config.

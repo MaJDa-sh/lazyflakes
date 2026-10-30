@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,8 +36,9 @@ func (o Option) Path() string {
 
 // Format turns what the user typed into the Nix expression to assign. A raw
 // value is taken as Nix as it is; otherwise it is read according to the
-// option's kind. null is accepted for options that allow it.
-func (o Option) Format(input string, raw bool) (string, error) {
+// option's kind. null is accepted for options that allow it. sets are the
+// package sets the module can use besides pkgs (Target.PackageSets).
+func (o Option) Format(input string, raw bool, sets []string) (string, error) {
 	in := strings.TrimSpace(input)
 	if strings.ContainsAny(in, "\n\r") {
 		return "", errors.New("one line only")
@@ -92,11 +94,11 @@ func (o Option) Format(input string, raw bool) (string, error) {
 		}
 		return "[ " + strings.Join(items, " ") + " ]", nil
 	case Package:
-		return packageExpr(in)
+		return packageExpr(in, sets)
 	case PackageList:
 		var items []string
 		for _, f := range commaList(in) {
-			e, err := packageExpr(f)
+			e, err := packageExpr(f, sets)
 			if err != nil {
 				return "", err
 			}
@@ -121,9 +123,11 @@ func commaList(s string) []string {
 }
 
 // packageExpr reads a package: a name such as htop or python3Packages.requests
-// is taken from pkgs, while something that already starts with a package set
-// (pkgs.htop, pkgs-unstable.htop) is kept as typed.
-func packageExpr(s string) (string, error) {
+// is taken from pkgs, while one that starts with pkgs or another of the
+// module's package sets (pkgs.htop, pkgs-unstable.htop) is kept as typed.
+// Names that merely start with "pkgs" are packages too: pkgsite, or
+// pkgsStatic.htop, which is pkgs.pkgsStatic.htop.
+func packageExpr(s string, sets []string) (string, error) {
 	s = strings.TrimSpace(s)
 	segs := strings.Split(s, ".")
 	for _, seg := range segs {
@@ -131,7 +135,7 @@ func packageExpr(s string) (string, error) {
 			return "", errors.New("a package name such as htop, or an expression in raw mode")
 		}
 	}
-	if strings.HasPrefix(segs[0], "pkgs") {
+	if len(segs) > 1 && (segs[0] == "pkgs" || slices.Contains(sets, segs[0])) {
 		return s, nil
 	}
 	return "pkgs." + s, nil

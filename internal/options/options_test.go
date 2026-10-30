@@ -132,11 +132,15 @@ func TestFormat(t *testing.T) {
 		{"programs.git.package", "gitFull", false, "pkgs.gitFull"},
 		{"programs.git.package", "python3Packages.requests", false, "pkgs.python3Packages.requests"},
 		{"programs.git.package", "pkgs-unstable.git", false, "pkgs-unstable.git"},
+		// Packages whose names start with "pkgs" are not package sets.
+		{"programs.git.package", "pkgsite", false, "pkgs.pkgsite"},
+		{"programs.git.package", "pkgsStatic.git", false, "pkgs.pkgsStatic.git"},
+		{"programs.git.package", "pkgsUnknown.git", false, "pkgs.pkgsUnknown.git"},
 		{"programs.git.package", "null", false, "null"},
 		{"environment.systemPackages", "htop, pkgs.jq", false, "[ pkgs.htop pkgs.jq ]"},
 	}
 	for _, c := range ok {
-		got, err := m[c.option].Format(c.input, c.raw)
+		got, err := m[c.option].Format(c.input, c.raw, []string{"pkgs-unstable"})
 		if err != nil || got != c.want {
 			t.Errorf("%s %q: got %q, %v; want %q", c.option, c.input, got, err, c.want)
 		}
@@ -154,7 +158,7 @@ func TestFormat(t *testing.T) {
 		{"environment.systemPackages", "htop, not a package"},
 	}
 	for _, c := range bad {
-		if got, err := m[c.option].Format(c.input, false); err == nil {
+		if got, err := m[c.option].Format(c.input, false, nil); err == nil {
 			t.Errorf("%s %q should be rejected, got %q", c.option, c.input, got)
 		}
 	}
