@@ -106,31 +106,14 @@ func inspectFlake(dir string) *Flake {
 		return nil
 	}
 	f := &Flake{Dir: dir}
-	// Nix reads git repositories itself and refuses ones owned by another
-	// user ("dubious ownership"), which is the normal state of /etc/nixos.
-	// A plain directory has no such check, so it is the second attempt.
-	var refs []string
-	if exec.Command("git", "-c", "safe.directory="+dir, "-C", dir, "rev-parse").Run() == nil {
-		f.GitRepo = true
-		refs = append(refs, "git+file://"+dir)
-	}
-	refs = append(refs, "path:"+dir)
-
-	for _, ref := range refs {
-		if err = evalFlake(f, ref); err == nil {
-			break
-		}
-		if f.EvalErr == "" {
-			f.EvalErr = err.Error() // the first failure is the informative one
-		}
-	}
-	if err != nil {
+	// safe.directory: /etc/nixos is normally owned by root.
+	f.GitRepo = exec.Command("git", "-c", "safe.directory="+dir, "-C", dir, "rev-parse").Run() == nil
+	if err := evalFlake(f, dir); err != nil {
+		f.EvalErr = err.Error()
 		// Last resort: read the host names out of flake.nix.
 		f.NixOS = scanHosts(string(src), "nixosConfigurations")
 		f.Darwin = scanHosts(string(src), "darwinConfigurations")
 		f.Home = scanHosts(string(src), "homeConfigurations")
-	} else {
-		f.EvalErr = ""
 	}
 	if len(f.NixOS)+len(f.Darwin)+len(f.Home) == 0 {
 		return nil
@@ -141,7 +124,7 @@ func inspectFlake(dir string) *Flake {
 // flakeExpr lists a flake's configurations. nixpkgs.pkgs counts as set when
 // it is defined above option-default priority (1500).
 const flakeExpr = `let
-  f = builtins.getFlake %q;
+  f = %s;
   hosts = out: pkgsSet: if f ? ${out} then map (n: { name = n; pkgsSet = pkgsSet f.${out}.${n}; }) (builtins.attrNames f.${out}) else [ ];
   nixosPkgsSet = c: (c.options.nixpkgs.pkgs.highestPrio or 1500) < 1500;
 in {
@@ -150,11 +133,16 @@ in {
   home = hosts "homeConfigurations" (c: false);
 }`
 
-func evalFlake(f *Flake, ref string) error {
+func evalFlake(f *Flake, dir string) error {
+	flake, cleanup, err := FlakeExpr(dir)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, nixBin, "--extra-experimental-features", "nix-command flakes",
-		"eval", "--impure", "--no-write-lock-file", "--json", "--expr", fmt.Sprintf(flakeExpr, ref))
+		"eval", "--impure", "--no-write-lock-file", "--json", "--expr", fmt.Sprintf(flakeExpr, flake))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

@@ -3,6 +3,7 @@ package options
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,8 +30,13 @@ func TestSourceFor(t *testing.T) {
 	}
 
 	flake := joined(&config.Target{Kind: "nixos", Flake: "/etc/nixos#laptop"}, env)
-	if !strings.Contains(flake, `(builtins.getFlake "path:/etc/nixos").inputs.nixpkgs.outPath or`) || strings.Contains(flake, "tryEval") {
+	if !strings.Contains(flake, `{ flake }: let nixpkgs = flake.inputs.nixpkgs.outPath or`) || strings.Contains(flake, "tryEval") {
 		t.Errorf("flake NixOS should use the flake's own nixpkgs:\n%s", flake)
+	}
+	// The flake is passed in by Build, never as a path: copy of the whole
+	// directory, which would put files git ignores into the store.
+	if src, _ := SourceFor(&config.Target{Kind: "nixos", Flake: "/etc/nixos#laptop"}, env); src.Flake != "/etc/nixos" || strings.Contains(flake, "path:") {
+		t.Errorf("source = %+v", src)
 	}
 
 	if got := joined(&config.Target{Kind: "home-manager"}, env); got != "github:nix-community/home-manager/release-25.11#docs-json" {
@@ -86,6 +92,17 @@ func TestBuildAndLoad(t *testing.T) {
 	if _, err := (Source{Label: "test"}).Build(context.Background()); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("a failing build should explain itself: %v", err)
 	}
+	// A configuration flake is handed to the expression by Build.
+	args := filepath.Join(t.TempDir(), "args")
+	fakeNix(t, `printf '%s' "$*" >`+args+`; printf '%s\n' "`+out+`"`)
+	dir := t.TempDir()
+	if _, err := (Source{Label: "test", Flake: dir, Args: []string{"--expr", "{ flake }: flake"}}).Build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(args); !strings.Contains(string(got), `--arg flake (builtins.getFlake "path:`+dir+`")`) {
+		t.Errorf("nix was called with %s", got)
+	}
+
 	fakeNix(t, `printf '/nonexistent\n'`)
 	if _, err := (Source{Label: "test"}).Build(context.Background()); err == nil || !strings.Contains(err.Error(), "no options.json") {
 		t.Errorf("err = %v", err)
@@ -123,5 +140,36 @@ func TestRealNixOSOptions(t *testing.T) {
 		if o.Settable() && o.Kind == Enum && len(o.Choices) == 0 {
 			t.Errorf("%s is a choice without choices: %q", name, o.Type)
 		}
+	}
+}
+
+// With LAZYFLAKES_NIX_EVAL=1: the options of a flake configuration, built
+// from the flake's own nixpkgs input with only its tracked files copied.
+func TestRealFlakeNixOSOptions(t *testing.T) {
+	if os.Getenv("LAZYFLAKES_NIX_EVAL") == "" {
+		t.Skip("set LAZYFLAKES_NIX_EVAL=1 to build the NixOS options with nix")
+	}
+	out, err := exec.Command("nix-instantiate", "--find-file", "nixpkgs").Output()
+	if err != nil {
+		t.Skip("no <nixpkgs> in NIX_PATH")
+	}
+	nixpkgs, _ := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "flake.nix"), []byte(`{ inputs.nixpkgs.url = "path:`+nixpkgs+`"; outputs = _: { }; }`), 0o644)
+	if err := exec.Command("git", "-C", dir, "init", "-q").Run(); err != nil {
+		t.Skip("git not available")
+	}
+	exec.Command("git", "-C", dir, "add", "flake.nix").Run()
+
+	src, err := SourceFor(&config.Target{Kind: "nixos", Flake: dir + "#test"}, Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := src.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) < 10000 {
+		t.Errorf("only %d NixOS options", len(opts))
 	}
 }

@@ -28,6 +28,9 @@ type Source struct {
 	// Args are the arguments of `nix build` that produce a directory
 	// holding share/doc/<name>/options.json.
 	Args []string
+	// Flake, when set, is the directory of the configuration flake, which
+	// Args take as the function argument `flake`.
+	Flake string
 }
 
 // nixBin is the nix command; tests replace it.
@@ -46,11 +49,11 @@ func SourceFor(t *config.Target, env Env) (Source, error) {
 	flake := flakeDir(t)
 	switch t.Kind {
 	case "nixos":
-		return Source{Label: "NixOS options", Args: []string{"--expr", nixosExpr(flake, env)}}, nil
+		return Source{Label: "NixOS options", Args: []string{"--expr", nixosExpr(flake != "", env)}, Flake: flake}, nil
 	case "home-manager":
 		if flake != "" {
-			return Source{Label: "home-manager options", Args: []string{"--expr",
-				fmt.Sprintf(`(builtins.getFlake %q).inputs.home-manager.packages.${builtins.currentSystem}.docs-json`, "path:"+flake)}}, nil
+			return Source{Label: "home-manager options", Flake: flake, Args: []string{"--expr",
+				`{ flake }: flake.inputs.home-manager.packages.${builtins.currentSystem}.docs-json`}}, nil
 		}
 		ref := "github:nix-community/home-manager"
 		if env.HomeManagerRelease != "" {
@@ -59,8 +62,8 @@ func SourceFor(t *config.Target, env Env) (Source, error) {
 		return Source{Label: "home-manager options", Args: []string{ref + "#docs-json"}}, nil
 	case "nix-darwin":
 		if flake != "" {
-			return Source{Label: "nix-darwin options", Args: []string{"--expr",
-				fmt.Sprintf(`let i = (builtins.getFlake %q).inputs; in (i.nix-darwin or i.darwin).packages.${builtins.currentSystem}.optionsJSON`, "path:"+flake)}}, nil
+			return Source{Label: "nix-darwin options", Flake: flake, Args: []string{"--expr",
+				`{ flake }: let i = flake.inputs; in (i.nix-darwin or i.darwin).packages.${builtins.currentSystem}.optionsJSON`}}, nil
 		}
 		return Source{Label: "nix-darwin options", Args: []string{"github:nix-darwin/nix-darwin#optionsJSON"}}, nil
 	}
@@ -75,24 +78,30 @@ func flakeDir(t *config.Target) string {
 
 // nixosExpr builds the options of the nixpkgs the target uses: the flake's
 // own nixpkgs input when it has one, else <nixpkgs>, else the fallback.
-func nixosExpr(flake string, env Env) string {
+func nixosExpr(flake bool, env Env) string {
 	fallback := env.FallbackNixpkgs
 	if fallback == "" {
 		fallback = "github:NixOS/nixpkgs/nixos-unstable"
 	}
-	var nixpkgs string
-	if flake != "" {
-		nixpkgs = fmt.Sprintf(`(builtins.getFlake %q).inputs.nixpkgs.outPath or (builtins.getFlake %q).outPath`, "path:"+flake, fallback)
-	} else {
-		nixpkgs = fmt.Sprintf(`(let t = builtins.tryEval <nixpkgs>; in if t.success then t.value else (builtins.getFlake %s).outPath)`, generate.NixString(fallback))
+	body := fmt.Sprintf(`(import (nixpkgs + "/nixos") { configuration = %s; }).config.system.build.manual.optionsJSON`, minimalNixOS)
+	if flake {
+		return fmt.Sprintf(`{ flake }: let nixpkgs = flake.inputs.nixpkgs.outPath or (builtins.getFlake %s).outPath; in %s`, generate.NixString(fallback), body)
 	}
-	return fmt.Sprintf(`let nixpkgs = %s; in (import (nixpkgs + "/nixos") { configuration = %s; }).config.system.build.manual.optionsJSON`, nixpkgs, minimalNixOS)
+	return fmt.Sprintf(`let nixpkgs = (let t = builtins.tryEval <nixpkgs>; in if t.success then t.value else (builtins.getFlake %s).outPath); in %s`, generate.NixString(fallback), body)
 }
 
 // Build builds the options file and returns the path of its options.json.
 func (s Source) Build(ctx context.Context) (string, error) {
 	args := []string{"--extra-experimental-features", "nix-command flakes",
 		"build", "--impure", "--no-link", "--print-out-paths", "--no-write-lock-file"}
+	if s.Flake != "" {
+		flake, cleanup, err := config.FlakeExpr(s.Flake)
+		if err != nil {
+			return "", fmt.Errorf("building the %s: %w", s.Label, err)
+		}
+		defer cleanup()
+		args = append(args, "--arg", "flake", flake)
+	}
 	cmd := exec.CommandContext(ctx, nixBin, append(args, s.Args...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

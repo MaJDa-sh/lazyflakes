@@ -214,9 +214,7 @@ func TestScanHosts(t *testing.T) {
 	}
 }
 
-// fakeNix replaces the nix command with a script that fails for git+file
-// references, like nix does on a repository owned by another user, and
-// answers for plain directories.
+// fakeNix replaces the nix command with a script.
 func fakeNix(t *testing.T, body string) {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "nix")
@@ -244,20 +242,23 @@ const shiftFlake = `{ outputs = { nixpkgs, ... }: {
   nixosConfigurations.shift = nixpkgs.lib.nixosSystem { modules = [ ./configuration.nix ]; };
 }; }`
 
-func TestInspectFlakeFallsBackToPlainDirectory(t *testing.T) {
-	fakeNix(t, `case "$*" in
-  *git+file*) echo "error: repository path is not owned by current user" >&2; exit 1 ;;
-  *path:*) echo '{"nixos":[{"name":"shift","pkgsSet":false}],"darwin":[],"home":[]}' ;;
-esac`)
-	f := inspectFlake(flakeDir(t, shiftFlake, true))
+func TestInspectFlakeCopiesTrackedFilesOnly(t *testing.T) {
+	args := filepath.Join(t.TempDir(), "args")
+	fakeNix(t, `printf '%s' "$*" >`+args+`
+echo '{"nixos":[{"name":"shift","pkgsSet":false}],"darwin":[],"home":[]}'`)
+	dir := flakeDir(t, shiftFlake, true)
+	f := inspectFlake(dir)
 	if f == nil || !reflect.DeepEqual(hostNames(f.NixOS), []string{"shift"}) {
 		t.Fatalf("flake = %+v", f)
 	}
-	if f.EvalErr != "" {
-		t.Errorf("a successful retry should not report an error: %q", f.EvalErr)
+	if f.EvalErr != "" || !f.GitRepo {
+		t.Errorf("flake = %+v", f)
 	}
-	if !f.GitRepo {
-		t.Error("the directory is a git repository")
+	// Neither git+file (refused for repositories of another user) nor a
+	// path: copy of the whole directory (ignored files would reach the store).
+	got, _ := os.ReadFile(args)
+	if strings.Contains(string(got), "git+file") || strings.Contains(string(got), `"path:`+dir) || !strings.Contains(string(got), "builtins.path") {
+		t.Errorf("the flake should be copied with its tracked files only:\n%s", got)
 	}
 }
 
