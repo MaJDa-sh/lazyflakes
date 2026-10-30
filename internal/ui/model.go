@@ -211,7 +211,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadInstalled()
 		m.syncSystem(m.sys.target, msg.err != nil, false)
 		m.instCursor = 0
-		if msg.err != nil {
+		if msg.err != nil && msg.script {
+			m.status = fmt.Sprintf("error: the script of %s failed (%v); only what it finished was recorded", msg.target, msg.err)
+		} else if msg.err != nil {
 			m.status = fmt.Sprintf("error: updating %s failed, nothing was changed (%v)", msg.target, msg.err)
 		} else if msg.script {
 			m.status = fmt.Sprintf("%s updated by its script: %s", msg.target, msg.summary)

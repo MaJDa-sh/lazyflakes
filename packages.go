@@ -140,6 +140,9 @@ func applyChange(t *config.Target, old, want managed.Module, noRebuild bool) (ra
 	cmd := exec.Command("sh", "-c", plan.Script())
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := plan.Done(cmd.Run()); err != nil {
+		if t.IsScript() {
+			return false, fmt.Errorf("the script of %s failed, only what it finished was recorded: %w", t.Name, err)
+		}
 		return false, fmt.Errorf("%s was not changed: %w", t.Name, err)
 	}
 	return true, nil

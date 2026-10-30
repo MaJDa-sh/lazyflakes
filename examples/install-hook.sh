@@ -9,7 +9,8 @@
 # and sets LAZYFLAKES_ACTION (add or remove), LAZYFLAKES_TARGET (the target's
 # name) and LAZYFLAKES_ALLOW (enabled options, comma-separated, e.g.
 # "unfree,insecure"). It runs in your terminal, so sudo and prompts work.
-# Exit non-zero to tell lazyflakes nothing was installed.
+# Exit non-zero to tell lazyflakes this call did nothing; the calls before
+# it, which succeeded, stay recorded.
 #
 # It also gets `set path=value ...` and `unset path ...` for options chosen
 # in the Options tab.

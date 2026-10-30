@@ -140,7 +140,7 @@ func TestScriptFailureRecordsNothing(t *testing.T) {
 
 	p, _ := Prepare(tgt, old, Module{Packages: []Entry{{"stable", "cowsay"}, {"stable", "jq"}}}, false)
 	out, err := runScript(t, p)
-	if err == nil || !strings.Contains(out, "nothing was recorded") {
+	if err == nil || !strings.Contains(out, "the script failed (action: add)") {
 		t.Fatalf("a failing script must fail the plan: err=%v\n%s", err, out)
 	}
 	if err := p.Done(err); err == nil {
@@ -161,6 +161,36 @@ func TestScriptFailureRecordsNothing(t *testing.T) {
 	}
 	if got, _, _ := Load(tgt); !reflect.DeepEqual(got.Packages, []Entry{{"stable", "jq"}}) {
 		t.Errorf("state after success = %+v", got)
+	}
+}
+
+// When a later call fails, what the calls before it did is recorded:
+// otherwise the state still lists packages the script already removed.
+func TestScriptPartialFailureRecordsFinishedCalls(t *testing.T) {
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "hook.sh")
+	os.WriteFile(hook, []byte("#!/bin/sh\n[ \"$1\" != add ]\n"), 0o755) // only add fails
+	tgt := scriptTarget(t, hook)
+	old := Module{
+		Packages: []Entry{{"stable", "cowsay"}, {"stable", "htop"}, {"stable", "jq"}},
+		Settings: []Setting{{"a", "1"}},
+	}
+	SaveState(tgt, old)
+	want := Module{
+		Packages: []Entry{{"stable", "htop"}, {"unstable", "jq"}, {"unstable", "ripgrep"}},
+		Settings: []Setting{{"a", "2"}},
+		Options:  generate.Options(0).With(generate.Unfree),
+	}
+	p, _ := Prepare(tgt, old, want, false)
+	defer p.Cleanup()
+	_, err := runScript(t, p)
+	if err := p.Done(err); err == nil {
+		t.Fatal("the failure is passed on")
+	}
+	// remove ran, add failed, set never ran.
+	got, _, _ := Load(tgt)
+	if wantNow := (Module{Packages: []Entry{{"stable", "htop"}}, Settings: []Setting{{"a", "1"}}, Options: want.Options}); !reflect.DeepEqual(got, wantNow) {
+		t.Errorf("state = %+v, want %+v", got, wantNow)
 	}
 }
 

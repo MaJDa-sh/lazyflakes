@@ -309,8 +309,10 @@ add-package unset time.timeZone
 (`path=value`, the value being a Nix expression; they come after the package
 calls.)
 
-Exit with a non-zero status to say it failed: nothing is recorded and the
-packages stay as they were. [`examples/install-hook.sh`](examples/install-hook.sh)
+Exit with a non-zero status to say a call failed: that call and the ones
+after it are not recorded and their packages stay as they were, while the
+calls before it (say the `remove` before a failing `add`) are, since your
+script already did them. [`examples/install-hook.sh`](examples/install-hook.sh)
 is a complete example that keeps one package per line between two marker
 comments in a file of yours.
 

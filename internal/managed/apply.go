@@ -19,8 +19,10 @@ type Plan struct {
 	GitAdd  bool   // the module lives in a git repo and is not tracked yet
 	Rebuild bool   // run the target's rebuild command after writing
 
-	hook *hookOps // script targets: the calls to the user's script
-	save *Module  // script targets: what to record once the script succeeded
+	hook     *hookOps // script targets: the calls to the user's script
+	from     *Module  // script targets: what was recorded before
+	save     *Module  // script targets: what to record once the script succeeded
+	progress string   // script targets: file the script lists its finished calls in
 }
 
 // NewPlan writes content to a temporary file and works out how to install it.
@@ -48,10 +50,12 @@ func NewPlan(t *config.Target, content string, rebuild bool) (Plan, error) {
 	}, nil
 }
 
-// Cleanup removes the temporary file.
+// Cleanup removes the temporary files. Call it after Done.
 func (p Plan) Cleanup() {
-	if p.NewFile != "" {
-		os.Remove(p.NewFile)
+	for _, f := range []string{p.NewFile, p.progress} {
+		if f != "" {
+			os.Remove(f)
+		}
 	}
 }
 

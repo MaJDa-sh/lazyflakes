@@ -395,8 +395,8 @@ func (m *Model) applySystem(rebuild bool) tea.Cmd {
 		pause:  true,
 	}
 	return tea.Exec(cmd, func(err error) tea.Msg {
-		plan.Cleanup()
 		err = plan.Done(err) // a script target's state is recorded here
+		plan.Cleanup()
 		return appliedMsg{target: t.Name, summary: summary, rebuilt: plan.Rebuild, script: t.IsScript(), err: err}
 	})
 }
