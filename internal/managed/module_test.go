@@ -321,3 +321,26 @@ func TestScriptMarksRepoSafe(t *testing.T) {
 		t.Errorf("git in the script must mark the repo safe:\n%s", p.Script())
 	}
 }
+
+// A writable module in a directory the user cannot write (a root-owned
+// /etc/nixos with the module chowned to the user) still needs sudo:
+// install removes the old file before it writes the new one.
+func TestNewPlanSudoForReadOnlyDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lazyflakes.nix")
+	os.WriteFile(file, []byte("{ }\n"), 0o666)
+	os.Chmod(dir, 0o555)
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	plan, err := NewPlan(target(file), "{ }\n", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.Cleanup()
+	if !plan.Sudo {
+		t.Error("the directory is not writable, so sudo is needed")
+	}
+}

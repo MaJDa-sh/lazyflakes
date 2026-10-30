@@ -55,11 +55,17 @@ func (p Plan) Cleanup() {
 	}
 }
 
+// writable reports whether the user can install file without sudo. install
+// replaces a file by removing it first, so its directory has to be
+// writable even when the file itself is.
 func writable(file string) bool {
+	if unix.Access(filepath.Dir(file), unix.W_OK) != nil {
+		return false
+	}
 	if _, err := os.Stat(file); err == nil {
 		return unix.Access(file, unix.W_OK) == nil
 	}
-	return unix.Access(filepath.Dir(file), unix.W_OK) == nil
+	return true
 }
 
 // needsGitAdd reports whether file is inside a git work tree but untracked.
