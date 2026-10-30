@@ -282,6 +282,22 @@ func TestInspectFlakeFallsBackToScanning(t *testing.T) {
 	}
 }
 
+func TestRebuildQuotesTheFlake(t *testing.T) {
+	d := Detect(System{OS: "linux", NixOSVersion: "25.11.1", Sudo: "sudo",
+		Flakes: []*Flake{{Dir: "/home/jane doe/nixos", NixOS: []FlakeHost{{Name: "it's"}}}}}, channels, "")
+	sys := roundTrip(t, d).Targets["system"]
+	if want := `sudo nixos-rebuild switch --flake '/home/jane doe/nixos#it'\''s'`; sys.Rebuild != want {
+		t.Errorf("rebuild = %s, want %s", sys.Rebuild, want)
+	}
+	if sys.Flake != "/home/jane doe/nixos#it's" {
+		t.Errorf("flake = %q is not a shell word", sys.Flake)
+	}
+	out, err := exec.Command("sh", "-c", "printf %s "+strings.TrimPrefix(sys.Rebuild, "sudo nixos-rebuild switch --flake ")).Output()
+	if err != nil || string(out) != "/home/jane doe/nixos#it's" {
+		t.Errorf("the shell reads %q, %v", out, err)
+	}
+}
+
 func TestDetectWarnsWhenHostNameIsUnknown(t *testing.T) {
 	d := Detect(System{OS: "linux", NixOSVersion: "25.11.1", Sudo: "sudo",
 		Flakes: []*Flake{{Dir: "/etc/nixos", NixOS: []FlakeHost{{}}}}}, channels, "")

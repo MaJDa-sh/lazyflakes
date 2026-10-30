@@ -424,13 +424,21 @@ func (d *Detected) pickHost(hosts []FlakeHost, want, kind string, preferred ...s
 	return hosts[0]
 }
 
-// flakeRef is dir#name, or just dir when the name is unknown.
+// flakeRef is dir#name, or just dir when the name is unknown, as one word
+// of a rebuild command: quoted for the shell when it holds a space or the
+// like, e.g. a home directory such as "/Users/Jane Doe".
 func flakeRef(dir, name string) string {
-	if name == "" {
-		return dir
+	ref := dir
+	if name != "" {
+		ref += "#" + name
 	}
-	return dir + "#" + name
+	if plainWord.MatchString(ref) {
+		return ref
+	}
+	return "'" + strings.ReplaceAll(ref, "'", `'\''`) + "'"
 }
+
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./#-]+$`)
 
 // flakeOutput is the Target.Flake value: dir#name, or "" when unknown.
 func flakeOutput(dir, name string) string {
