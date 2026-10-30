@@ -91,7 +91,7 @@ func renderShell(channels []Channel, pkgs []Package, opts Options) string {
 	for i, c := range used {
 		src := "<nixpkgs>"
 		if url, ok := TarballURL(c.Ref); ok {
-			src = fmt.Sprintf("(fetchTarball %q)", url)
+			src = "(fetchTarball " + NixString(url) + ")"
 		}
 		args[i] = fmt.Sprintf("%s ? import %s %s", c.Var, src, importArgs)
 	}
@@ -119,7 +119,7 @@ func renderFlake(channels []Channel, pkgs []Package, opts Options) string {
 	}
 	var inputs, args, sets, vars []string
 	for _, c := range used {
-		inputs = append(inputs, fmt.Sprintf("    %s.url = %q;", c.Input, flakeInputURL(c.Ref)))
+		inputs = append(inputs, fmt.Sprintf("    %s.url = %s;", c.Input, NixString(flakeInputURL(c.Ref))))
 		args = append(args, c.Input)
 		sets = append(sets, fmt.Sprintf(set, c.Var, c.Input))
 		vars = append(vars, c.Var)
@@ -203,7 +203,7 @@ func nixAttrPath(attr, set string, with bool) string {
 	quoted := false
 	for i, s := range segs {
 		if !identRe.MatchString(s) {
-			segs[i] = fmt.Sprintf("%q", s)
+			segs[i] = NixString(s)
 			quoted = quoted || i == 0
 		}
 	}
@@ -212,6 +212,34 @@ func nixAttrPath(attr, set string, with bool) string {
 		return set + "." + path
 	}
 	return path
+}
+
+// NixString quotes s as a Nix string, escaping what would otherwise be
+// interpreted (backslashes, quotes, ${…} and control characters). Go's %q
+// is not a substitute: it leaves ${ alone and writes escapes Nix lacks.
+func NixString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '$' && i+1 < len(s) && s[i+1] == '{':
+			b.WriteString(`\$`)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // flakeInputURL turns the browsed flake ref into a flake input URL. The bare
@@ -307,9 +335,9 @@ func ShellExpr(channels []Channel, pkgs []Package, opts Options) string {
 	}
 	for _, c := range used {
 		if cfg != "" {
-			lets = append(lets, fmt.Sprintf("%s = import (builtins.getFlake %q).outPath { system = builtins.currentSystem; inherit config; };", c.Var, c.Ref))
+			lets = append(lets, fmt.Sprintf("%s = import (builtins.getFlake %s).outPath { system = builtins.currentSystem; inherit config; };", c.Var, NixString(c.Ref)))
 		} else {
-			lets = append(lets, fmt.Sprintf("%s = (builtins.getFlake %q).legacyPackages.${builtins.currentSystem};", c.Var, c.Ref))
+			lets = append(lets, fmt.Sprintf("%s = (builtins.getFlake %s).legacyPackages.${builtins.currentSystem};", c.Var, NixString(c.Ref)))
 		}
 	}
 	attrs := make([]string, len(pkgs))

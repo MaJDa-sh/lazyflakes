@@ -499,7 +499,7 @@ func addImpureSets(t *Target, own string, channels []generate.Channel) {
 			continue
 		}
 		if url, ok := generate.TarballURL(c.Ref); ok {
-			t.Sets[c.Name] = fmt.Sprintf("import (fetchTarball %q) { inherit (pkgs) config; system = pkgs.stdenv.hostPlatform.system; }", url)
+			t.Sets[c.Name] = fmt.Sprintf("import (fetchTarball %s) { inherit (pkgs) config; system = pkgs.stdenv.hostPlatform.system; }", generate.NixString(url))
 		}
 	}
 }
@@ -516,8 +516,8 @@ func (d *Detected) addPureSets(t *Target, own string, channels []generate.Channe
 		v := "pkgs-" + c.Name
 		d.Hints[t.Name] = append(d.Hints[t.Name],
 			fmt.Sprintf("To install from %s too, add an input to your flake and pass it to your modules:", c.Name),
-			fmt.Sprintf("  inputs.nixpkgs-%s.url = %q;", c.Name, c.Ref),
-			fmt.Sprintf("  %s { specialArgs = { %s = import nixpkgs-%s { system = %q; config.allowUnfree = true; }; }; … };", builder, v, c.Name, system),
+			fmt.Sprintf("  inputs.nixpkgs-%s.url = %s;", c.Name, generate.NixString(c.Ref)),
+			fmt.Sprintf("  %s { specialArgs = { %s = import nixpkgs-%s { system = %s; config.allowUnfree = true; }; }; … };", builder, v, c.Name, generate.NixString(system)),
 			"then uncomment:",
 			fmt.Sprintf("%s = %q", c.Name, v),
 		)

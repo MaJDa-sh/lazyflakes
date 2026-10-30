@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/MaJDa-sh/lazyflakes/internal/config"
+	"github.com/MaJDa-sh/lazyflakes/internal/generate"
 )
 
 // Env says which release of the system the options are for.
@@ -83,7 +84,7 @@ func nixosExpr(flake string, env Env) string {
 	if flake != "" {
 		nixpkgs = fmt.Sprintf(`(builtins.getFlake %q).inputs.nixpkgs.outPath or (builtins.getFlake %q).outPath`, "path:"+flake, fallback)
 	} else {
-		nixpkgs = fmt.Sprintf(`(let t = builtins.tryEval <nixpkgs>; in if t.success then t.value else (builtins.getFlake %q).outPath)`, fallback)
+		nixpkgs = fmt.Sprintf(`(let t = builtins.tryEval <nixpkgs>; in if t.success then t.value else (builtins.getFlake %s).outPath)`, generate.NixString(fallback))
 	}
 	return fmt.Sprintf(`let nixpkgs = %s; in (import (nixpkgs + "/nixos") { configuration = %s; }).config.system.build.manual.optionsJSON`, nixpkgs, minimalNixOS)
 }

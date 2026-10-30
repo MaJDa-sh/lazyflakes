@@ -26,10 +26,26 @@ func TestNixAttrPath(t *testing.T) {
 		{"gtk+3", true, `pkgsStable."gtk+3"`},
 		{"haskellPackages.3d", true, `haskellPackages."3d"`},
 		{"ripgrep", false, "pkgsStable.ripgrep"},
+		// Quoted the Nix way: no interpolation, no Go-only escapes.
+		{"a${b}", false, `pkgsStable."a\${b}"`},
+		{"café", false, `pkgsStable."café"`},
 	}
 	for _, c := range cases {
 		if got := nixAttrPath(c.attr, "pkgsStable", c.with); got != c.want {
 			t.Errorf("nixAttrPath(%q, with=%v) = %q, want %q", c.attr, c.with, got, c.want)
+		}
+	}
+}
+
+func TestNixString(t *testing.T) {
+	for in, want := range map[string]string{
+		`plain`:         `"plain"`,
+		`say "hi" \ ok`: `"say \"hi\" \\ ok"`,
+		"${x} $y $${z}": `"\${x} $y $\${z}"`,
+		"a\nb\tc":       `"a\nb\tc"`,
+	} {
+		if got := NixString(in); got != want {
+			t.Errorf("NixString(%q) = %s, want %s", in, got, want)
 		}
 	}
 }

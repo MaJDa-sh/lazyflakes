@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MaJDa-sh/lazyflakes/internal/generate"
 )
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
@@ -25,37 +27,10 @@ func (o Option) Path() string {
 		if identRe.MatchString(s) {
 			segs[i] = s
 		} else {
-			segs[i] = nixString(s)
+			segs[i] = generate.NixString(s)
 		}
 	}
 	return strings.Join(segs, ".")
-}
-
-// nixString quotes s as a Nix string, escaping what would otherwise be
-// interpreted (backslashes, quotes, ${…} and control characters).
-func nixString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '\\':
-			b.WriteString(`\\`)
-		case c == '"':
-			b.WriteString(`\"`)
-		case c == '$' && i+1 < len(s) && s[i+1] == '{':
-			b.WriteString(`\$`)
-		case c == '\n':
-			b.WriteString(`\n`)
-		case c == '\r':
-			b.WriteString(`\r`)
-		case c == '\t':
-			b.WriteString(`\t`)
-		default:
-			b.WriteByte(c)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }
 
 // Format turns what the user typed into the Nix expression to assign. A raw
@@ -88,7 +63,7 @@ func (o Option) Format(input string, raw bool) (string, error) {
 	case Enum:
 		for _, c := range o.Choices {
 			if in == c {
-				return nixString(c), nil
+				return generate.NixString(c), nil
 			}
 		}
 		return "", fmt.Errorf("one of: %s", strings.Join(o.Choices, ", "))
@@ -99,18 +74,18 @@ func (o Option) Format(input string, raw bool) (string, error) {
 		}
 		return strconv.FormatInt(n, 10), nil
 	case String:
-		return nixString(input), nil // spaces and all: not trimmed
+		return generate.NixString(input), nil // spaces and all: not trimmed
 	case Path:
 		if !strings.HasPrefix(in, "/") {
 			return "", errors.New("an absolute path, starting with /")
 		}
 		// A string, not a path literal: a literal is copied into the Nix
 		// store when it is used as text.
-		return nixString(in), nil
+		return generate.NixString(in), nil
 	case StringList:
 		var items []string
 		for _, f := range commaList(in) {
-			items = append(items, nixString(f))
+			items = append(items, generate.NixString(f))
 		}
 		if len(items) == 0 {
 			return "[ ]", nil
