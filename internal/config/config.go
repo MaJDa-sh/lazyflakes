@@ -78,14 +78,16 @@ func (t *Target) HasChannel(name string) bool {
 }
 
 // StateDir is where lazyflakes records what scripts installed:
-// $XDG_STATE_HOME/lazyflakes, or ~/.local/state/lazyflakes.
+// $XDG_STATE_HOME/lazyflakes, or ~/.local/state/lazyflakes. It is "" when
+// neither is known: a shared directory such as /tmp would let another user
+// plant the record.
 func StateDir() string {
 	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
 		return filepath.Join(dir, "lazyflakes")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), "lazyflakes")
+		return ""
 	}
 	return filepath.Join(home, ".local", "state", "lazyflakes")
 }
@@ -177,7 +179,11 @@ func (t *Target) normalizeScript() error {
 	}
 	t.Script = ExpandHome(strings.TrimSpace(t.Script))
 	if t.File == "" {
-		t.File = filepath.Join(StateDir(), t.Name+".json")
+		dir := StateDir()
+		if dir == "" {
+			return errors.New(`no home directory or XDG_STATE_HOME to record what the script installed in: set file = "…"`)
+		}
+		t.File = filepath.Join(dir, t.Name+".json")
 	}
 	t.File = ExpandHome(t.File)
 	if !filepath.IsAbs(t.File) {

@@ -123,3 +123,19 @@ func TestLoadErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestScriptTargetWithoutStateDir(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "")
+	if dir := StateDir(); dir != "" {
+		t.Fatalf("StateDir = %q, want none rather than a shared directory", dir)
+	}
+	tgt := &Target{Name: "mine", Kind: KindScript, Script: "true"}
+	if err := tgt.normalize(); err == nil || !strings.Contains(err.Error(), "file =") {
+		t.Errorf("err = %v", err)
+	}
+	tgt = &Target{Name: "mine", Kind: KindScript, Script: "true", File: "/var/lib/me/state.json"}
+	if err := tgt.normalize(); err != nil {
+		t.Errorf("an explicit file needs no state directory: %v", err)
+	}
+}
