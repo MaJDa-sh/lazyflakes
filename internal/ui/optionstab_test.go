@@ -402,3 +402,36 @@ func TestDescribeChanges(t *testing.T) {
 		t.Errorf("describe() = %q, want %q", got, want)
 	}
 }
+
+// An option is chosen for one target: switching to another must not carry
+// it along, or a NixOS option would be written into a home-manager module.
+func TestQueuedOptionsStayWithTheirTarget(t *testing.T) {
+	m := optionsModel(t, "")
+	cfg, _ := os.ReadFile(m.configPath)
+	home := filepath.Join(t.TempDir(), "home.nix")
+	os.WriteFile(m.configPath, []byte("default = \"system\"\n"+string(cfg)+
+		"\n[targets.home]\nkind = \"home-manager\"\nfile = '"+home+"'\nsets = { stable = \"pkgs\" }\n"), 0o644)
+	m.syncSystem(0, false, false)
+	m.queueSetting("services.openssh.enable", "true")
+
+	m = press(t, m, "]")
+	if name := m.curTarget().Name; name != "home" {
+		t.Fatalf("] should switch to home, got %s", name)
+	}
+	if len(m.pendingSet) != 0 {
+		t.Errorf("home has nothing queued: %+v", m.pendingSet)
+	}
+	for _, it := range m.sys.items {
+		if it.setting {
+			t.Errorf("system's option would be applied to home: %+v", it)
+		}
+	}
+
+	m = press(t, m, "[")
+	if len(m.pendingSet) != 1 || m.pendingSet[0].path != "services.openssh.enable" {
+		t.Fatalf("system's queue should come back: %+v", m.pendingSet)
+	}
+	if n := len(m.sys.items); n != 1 || m.sys.items[0].value != "true" {
+		t.Errorf("items = %+v", m.sys.items)
+	}
+}

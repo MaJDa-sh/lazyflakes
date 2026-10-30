@@ -105,7 +105,9 @@ type Model struct {
 	olFiltered []int                  // indices into the current target's options
 	olCursor   int
 	olOffset   int
-	pendingSet []pendingSetting // options chosen and not applied yet
+	pendingSet []pendingSetting            // options chosen for the current target and not applied yet
+	pendingFor string                      // the target pendingSet belongs to
+	pendingBy  map[string][]pendingSetting // the queues of the other targets
 	pendCursor int
 	setCursor  int
 	edit       *valueEditor

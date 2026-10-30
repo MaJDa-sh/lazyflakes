@@ -103,6 +103,7 @@ func (m *Model) syncSystem(ti int, keepPending, check bool) tea.Cmd {
 	}
 	s.target = ti
 	t := s.targets[ti]
+	m.switchPending(t.Name)
 	mod, exists, err := managed.Load(t)
 	if err != nil {
 		s.err = err
@@ -173,6 +174,23 @@ func (m *Model) syncSystem(ti int, keepPending, check bool) tea.Cmd {
 		ok, err := managed.CheckImported(ctx, t)
 		return importCheckedMsg{file: t.File, imported: ok, err: err}
 	}
+}
+
+// switchPending makes pendingSet the queue of the named target. Options are
+// chosen for one target, so another target's queue waits until that
+// target is shown again rather than being applied to the wrong system.
+func (m *Model) switchPending(target string) {
+	if m.pendingFor == target {
+		return
+	}
+	if m.pendingBy == nil {
+		m.pendingBy = map[string][]pendingSetting{}
+	}
+	if m.pendingFor != "" && len(m.pendingSet) > 0 {
+		m.pendingBy[m.pendingFor] = m.pendingSet
+	}
+	m.pendingSet, m.pendingFor, m.pendCursor = m.pendingBy[target], target, 0
+	delete(m.pendingBy, target)
 }
 
 // importChecked applies Nix's answer if the popup still shows that target.
