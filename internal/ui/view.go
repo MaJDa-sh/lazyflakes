@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MaJDa-sh/lazyflakes/internal/generate"
+	"github.com/MaJDa-sh/lazyflakes/internal/nix"
 )
 
 const (
@@ -150,6 +151,14 @@ func (m Model) generateView() string {
 	lines = append(lines, "", fmt.Sprintf(" %s also write .envrc %s", box,
 		dimStyle.Render("("+f.EnvrcLine()+", for direnv) · e toggle")))
 	lines = append(lines, " "+labelStyle.Render("options")+" "+m.optionsSummary()+dimStyle.Render(" · o edit"))
+	if len(m.projectTools) > 0 {
+		labels := make([]string, len(m.projectTools))
+		for i, t := range m.projectTools {
+			labels[i] = t.Label
+		}
+		lines = append(lines, " "+labelStyle.Render("detected")+" "+markStyle.Render(strings.Join(labels, ", "))+
+			dimStyle.Render(" · select these with space to include them"))
+	}
 
 	lines = append(lines, "", labelStyle.Render(" preview"))
 	if _, err := os.Stat(filepath.Join(m.dir, f.Filename())); err == nil {
@@ -335,6 +344,10 @@ func (m Model) detailsView(w, h int) string {
 	for _, in := range m.installed[pkg.Attr] {
 		lines = append(lines, labelStyle.Render("installed")+" "+in.target+" · "+in.channel+
 			dimStyle.Render("  (press 3 to remove or change it)"))
+	}
+	if hint, ok := nix.ModuleHint[pkg.Attr]; ok {
+		lines = append(lines, labelStyle.Render("hint     ")+markStyle.Render(hint)+
+			dimStyle.Render("  (in the Options tab)"))
 	}
 	lines = append(lines, "", labelStyle.Render("description"))
 	desc := pkg.Description
