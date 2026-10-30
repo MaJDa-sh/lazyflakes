@@ -60,7 +60,7 @@ checkout `./install.sh` (installs to `~/.local/bin`, `PREFIX=…` to change).
 | Where | Keys |
 |---|---|
 | Everywhere | `1` `2` `3` panels (or `tab` to cycle) · `t`/`T` next/previous tab: Packages, Options, Generations · `q` quit |
-| [1] Packages | `/` search · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` allow unfree… · `ctrl+r` reload |
+| [1] Packages | `/` search (try a command name like `rg`) · `j/k` move · `space` select · `c` default channel · `enter` shell · `w` write nix file · `a` install into system · `o` allow unfree… · `ctrl+r` reload |
 | [2] Selected | `j/k` move · `space/d` unselect · `c` switch channel · `enter` shell · `w` · `a` · `o` |
 | [3] Installed | `j/k` move · `d` mark for removal · `c` change channel · `u` undo · `enter` review and apply · `[`/`]` other target |
 | Options tab: [1] Options | `/` search · `j/k` move · `enter` or `space` set a value · `a` review and apply · `[`/`]` other target · `ctrl+r` reload |
@@ -76,6 +76,22 @@ Packages lazyflakes installed get a hollow ○ in the package list and are
 listed in the **[3] Installed** panel. To remove one, press `3`, move to it,
 press `d` (it turns red: "remove on apply"), then `enter` to review the
 changes and `enter` again to apply and rebuild.
+
+**Search by command name.**  Typing `rg` finds `ripgrep`, `fd` finds `fd`,
+`convert` finds `imagemagick`, `tldr` finds `tealdeer` — even when the
+package name has nothing in common with the command. The map is loaded from
+the `programs.sqlite` that NixOS ships; without it (or without `sqlite3`)
+the feature is silently off.
+
+**Module hints.**  When the details panel shows `git`, `docker`, `steam`,
+`firefox`, `zsh` or one of ~60 other packages, a **hint** line says which
+NixOS or home-manager module option is usually better than installing the
+package directly, for example `programs.git.enable (in the Options tab)`.
+
+**Project detection.**  In a directory with `go.mod`, `package.json`,
+`Cargo.toml`, `pyproject.toml` or another language marker, the write popup
+(`w`) shows which toolchain was detected, so you can select it with `space`
+before writing the shell.
 
 Flags: `-channel stable|unstable`, `-stable <flake ref>`, `-unstable <flake ref>`,
 `-format flake|shell`, `-envrc=false`, `-allow unfree,insecure`, `-config <path>`.
