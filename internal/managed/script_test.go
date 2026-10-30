@@ -242,9 +242,14 @@ func TestExampleHookScript(t *testing.T) {
 
 	// Options go between their own markers.
 	os.WriteFile(packages, []byte("{\n  # lazyflakes:settings-begin\n  # lazyflakes:settings-end\n  environment.systemPackages = [\n    # lazyflakes:begin\n    # lazyflakes:end\n  ];\n}\n"), 0o644)
-	got := apply(Module{Settings: []Setting{{"services.openssh.enable", "true"}, {"networking.hostName", `"a b=c"`}}})
+	got := apply(Module{Settings: []Setting{{"services.openssh.enable", "true"}, {"networking.hostName", `"a b=c"`},
+		{"users.motd", `"say \"hi\" \\ ok"`}}})
 	if !strings.Contains(got, "    services.openssh.enable = true;\n") || !strings.Contains(got, `    networking.hostName = "a b=c";`+"\n") {
 		t.Errorf("after setting options:\n%s", got)
+	}
+	// Escapes in Nix strings are written as they are.
+	if !strings.Contains(got, `    users.motd = "say \"hi\" \\ ok";`+"\n") {
+		t.Errorf("escaped string mangled:\n%s", got)
 	}
 	got = apply(Module{Settings: []Setting{{"services.openssh.enable", "false"}}})
 	if strings.Contains(got, "hostName") || strings.Count(got, "services.openssh.enable") != 1 || !strings.Contains(got, "enable = false;") {

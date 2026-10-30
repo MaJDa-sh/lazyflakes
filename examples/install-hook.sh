@@ -38,14 +38,16 @@ file=${PACKAGES_FILE:-$HOME/nixos/packages.nix}
 action=$1
 shift
 
-# Insert $1 before the line containing $2, or delete the lines starting with $1
-# when $2 is empty.
+# insert_before puts line $1 before the line containing $2; delete_lines
+# deletes the lines starting with $1. The texts reach awk through the
+# environment: awk -v would read \" and \\ in them as escapes, which breaks
+# Nix strings such as "say \"hi\"".
 insert_before() {
-  awk -v line="$1" -v marker="$2" 'index($0, marker) { print line } { print }' "$file" >"$file.tmp"
+  LF_LINE=$1 LF_MARKER=$2 awk 'index($0, ENVIRON["LF_MARKER"]) { print ENVIRON["LF_LINE"] } { print }' "$file" >"$file.tmp"
   mv "$file.tmp" "$file"
 }
 delete_lines() {
-  awk -v prefix="$1" 'index($0, prefix) != 1' "$file" >"$file.tmp"
+  LF_PREFIX=$1 awk 'index($0, ENVIRON["LF_PREFIX"]) != 1' "$file" >"$file.tmp"
   mv "$file.tmp" "$file"
 }
 
